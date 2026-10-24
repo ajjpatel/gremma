@@ -1,5 +1,7 @@
 # Gremma developer guide
 
+The Android Studio project is in [`AndroidStudio/`](AndroidStudio/README.md). It is an early Android implementation; see its README for implemented features and remaining iOS parity work.
+
 Gremma is a SwiftUI iPhone app using [Google LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), pinned to **0.18.1**, for local Gemma conversation and vision. See the [product overview](../README.md).
 
 ## Build and sign
