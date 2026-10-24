@@ -21,7 +21,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 import java.io.File
 import java.util.Calendar
 
@@ -67,6 +66,7 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
     private fun refresh() = _state.update { it.copy(records = store.all()) }
 
     private fun say(text: String, image: String? = null, speak: Boolean = true) {
+        Log.i("Gremma", "say (${gemma.lastMs} ms): $text")
         _state.update { it.copy(messages = it.messages + ChatLine(false, text, image), lastMs = gemma.lastMs) }
         if (speak) voice.speak(text)
     }
@@ -136,6 +136,9 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { work.withLock { answer(intent, q) } }
     }
 
+    /** adb test hook: run a photo action on an image already on the phone. */
+    fun askWithImage(action: Action, path: String) = onPhoto(Uri.fromFile(File(path)), action)
+
     fun quick(intent: Action) {
         if (intent in Router.NEEDS_PHOTO) _state.update { it.copy(cameraRequest = intent) }
         else viewModelScope.launch { work.withLock { answer(intent, intent.name.lowercase().replace('_', ' ')) } }
@@ -193,15 +196,11 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private suspend fun remember(bmp: android.graphics.Bitmap, photoName: String) {
-        val raw = gemma.generateJson(Prompts.MEMORY, "List the objects in this photo.", Prompts.MEMORY_SCHEMA, Images.png(bmp), 600)
-        val objects = runCatching { JSONObject(raw).getJSONArray("objects") }.getOrNull()
+        val rows = gemma.generateRows(Prompts.MEMORY, "List the objects in this photo.", Images.png(bmp), 300)
         val now = System.currentTimeMillis()
         var id = store.nextId()
-        val records = (0 until (objects?.length() ?: 0)).mapNotNull { i ->
-            val o = objects!!.getJSONObject(i)
-            val name = o.optString("name").trim().lowercase()
-            if (name.isBlank()) null else MemoryRecord(id++, MemoryKind.SEEN, name, o.optString("details").trim(),
-                o.optString("location").trim(), timeMs = now, source = "photo", afterImage = photoName)
+        val records = rows.filter { it.size >= 3 && it[0].isNotBlank() }.map { r ->
+            MemoryRecord(id++, MemoryKind.SEEN, r[0].lowercase(), r[1], r[2], timeMs = now, source = "photo", afterImage = photoName)
         }.distinctBy { it.name + it.location }
         val indexed = records.map { it.copy(embedding = embedder.embed(it.sentence(), false)) }
         store.addAll(indexed); refresh()
@@ -214,7 +213,7 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
         if (ocr.isBlank()) { say("I couldn't find readable text. Try moving the label closer and holding steady."); return }
         if (!gemma.isReady) { say(ocr); return }
         val system = when (intent) { Action.READ_MEDICINE -> Prompts.READ_MEDICINE; Action.READ_EXPIRY -> Prompts.READ_EXPIRY; else -> Prompts.READ_TEXT }
-        say(gemma.generate(system, "OCR text:\n$ocr", Images.png(bmp), 300))
+        say(gemma.generate(system, "OCR text:\n$ocr", Images.png(bmp), 300, visionTokens = 280))
     }
 
     // ---- Board clips ----
@@ -231,7 +230,7 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
                 if (!gemma.isReady) break
                 work.withLock {
                     status("New activity from the home camera…", busy = true)
-                    val outcome = runCatching { clips.process(clip) }
+                    val outcome = runCatching { withContext(Dispatchers.Default) { clips.process(clip) } }
                         .onFailure { Log.e("Gremma", "clip failed", it) }.getOrNull()
                     done += clip.name; prefs.edit().putStringSet("clipsDone", done.toSet()).apply()
                     refresh()

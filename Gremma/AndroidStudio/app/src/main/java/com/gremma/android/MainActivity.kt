@@ -73,6 +73,21 @@ class MainActivity : ComponentActivity() {
                 GremmaScreen(vm)
             }
         }
+        handle(intent)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        handle(intent)
+    }
+
+    /** adb shell am start -n com.gremma.android/.MainActivity --es ask "where are my keys" */
+    private fun handle(intent: android.content.Intent?) {
+        intent?.getStringExtra("ask")?.let { vm.ask(it) }
+        intent?.getStringExtra("image")?.let { path ->
+            vm.askWithImage(Action.valueOf(intent.getStringExtra("action") ?: "DESCRIBE"), path)
+        }
+        intent?.removeExtra("ask"); intent?.removeExtra("image")
     }
 }
 

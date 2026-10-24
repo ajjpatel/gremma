@@ -5,7 +5,6 @@ import android.graphics.BitmapFactory
 import android.graphics.Rect
 import android.media.MediaMetadataRetriever
 import android.util.Log
-import org.json.JSONObject
 import java.io.File
 
 private const val TAG = "GremmaClip"
@@ -88,13 +87,12 @@ class ClipProcessor(
 
     private suspend fun name(frame: Bitmap, region: ChangeDetector.Region): Naming {
         val crop = Images.markBox(Images.crop(frame, region.cropBox), region.boxInCrop)
-        val raw = runCatching {
-            gemma.generateJson(Prompts.NAME_CROP, "What is inside the red box?", Prompts.NAME_CROP_SCHEMA, Images.png(Images.scale(crop, 768)), 120)
-        }.onFailure { Log.w(TAG, "naming failed", it) }.getOrDefault("{}")
-        val o = runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
-        val n = o.optString("name").trim().lowercase()
+        val row = runCatching {
+            gemma.generateRows(Prompts.NAME_CROP, "What is inside the red box?", Images.png(Images.scale(crop, 512)), 60, visionTokens = 140).firstOrNull()
+        }.onFailure { Log.w(TAG, "naming failed", it) }.getOrNull().orEmpty()
+        val n = row.getOrElse(0) { "" }.lowercase()
         val empty = n.isBlank() || n in setOf("none", "nothing", "empty", "person", "hand", "shadow", "surface")
-        return Naming(if (empty) "" else n, o.optString("details").trim(), o.optString("on").trim().ifBlank { "in view of the home camera" })
+        return Naming(if (empty) "" else n, row.getOrElse(1) { "" }, row.getOrElse(2) { "" }.ifBlank { "in view of the home camera" })
     }
 
     private fun sameThing(a: String, b: String): Boolean {
