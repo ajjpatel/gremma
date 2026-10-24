@@ -1,0 +1,22 @@
+.build/
+.models/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+*.mobileprovision
+*.p12
+
+
+# Local installers, model weights, captures, and credentials
+*.dmg
+*.litertlm
+*.tflite
+*.gguf
+*.safetensors
+*.mp4
+*.mov
+*.p8
+.env
+.env.*
+!.env.example
