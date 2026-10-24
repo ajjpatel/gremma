@@ -32,16 +32,21 @@ class ClipProcessor(
         val firstPeople = people.detect(first)
         val lastPeople = people.detect(last)
         val final = detector.compare(first, last, firstPeople + lastPeople).take(4)
-        Log.i(TAG, "${clip.name}: ${frames.size} frames, ${final.size} final regions, people ${firstPeople.size}/${lastPeople.size}")
+        val sx = detector.lastShiftX; val sy = detector.lastShiftY
+        Log.i(TAG, "${clip.name}: ${frames.size} frames, ${final.size} final regions, people ${firstPeople.size}/${lastPeople.size}, shift $sx,$sy")
+        fun moved(r: Rect) = Rect(r).apply {
+            offset(sx.coerceIn(-left, last.width - right), sy.coerceIn(-top, last.height - bottom))
+        }
 
         val events = mutableListOf<MemoryRecord>()
         val removed = mutableListOf<MemoryRecord>(); val appeared = mutableListOf<MemoryRecord>()
         var id = store.nextId()
         for ((i, region) in final.withIndex()) {
-            val before = name(first, region); val after = name(last, region)
+            val lastRegion = region.copy(cropBox = moved(region.cropBox))
+            val before = name(first, region); val after = name(last, lastRegion)
             val tag = "${clip.nameWithoutExtension}_$i"
             val beforeImg = store.saveImage(Images.jpeg(Images.markBox(Images.crop(first, region.cropBox), region.boxInCrop)), "${tag}_before.jpg")
-            val afterImg = store.saveImage(Images.jpeg(Images.markBox(Images.crop(last, region.cropBox), region.boxInCrop)), "${tag}_after.jpg")
+            val afterImg = store.saveImage(Images.jpeg(Images.markBox(Images.crop(last, lastRegion.cropBox), region.boxInCrop)), "${tag}_after.jpg")
             fun rec(kind: MemoryKind, n: Naming, loc: String) = MemoryRecord(id++, kind, n.name, n.details, loc, room = room,
                 timeMs = time, source = "board", beforeImage = beforeImg, afterImage = afterImg)
             val bName = before.name; val aName = after.name
@@ -67,6 +72,7 @@ class ClipProcessor(
         var maxPeople = maxOf(firstPeople.size, lastPeople.size)
         for (mid in frames.subList(1, frames.size - 1)) {
             val midPeople = people.detect(mid)
+            Log.i(TAG, "mid frame ${mid.width}x${mid.height} ${mid.config}: ${midPeople.size} people")
             maxPeople = maxOf(maxPeople, midPeople.size)
             for (r in detector.compare(first, mid, firstPeople + midPeople)) {
                 if (finalBoxes.none { Rect.intersects(it, r.box) } && lifted.none { Rect.intersects(it.box, r.box) }) lifted += r
@@ -93,7 +99,7 @@ class ClipProcessor(
     private suspend fun name(frame: Bitmap, region: ChangeDetector.Region): Naming {
         val crop = Images.markBox(Images.crop(frame, region.cropBox), region.boxInCrop)
         val row = runCatching {
-            gemma.generateRows(Prompts.NAME_CROP, "What is inside the red box?", Images.png(Images.scale(crop, 512)), 60, visionTokens = 140).firstOrNull()
+            gemma.generateRows(Prompts.NAME_CROP, "What is inside the red box?", Images.png(Images.scale(crop, 768)), 60, visionTokens = 280).firstOrNull()
         }.onFailure { Log.w(TAG, "naming failed", it) }.getOrNull().orEmpty()
         val n = row.getOrElse(0) { "" }.lowercase()
         val empty = n.isBlank() || n in setOf("none", "nothing", "empty", "person", "hand", "shadow", "surface")

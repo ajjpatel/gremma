@@ -13,10 +13,10 @@ import kotlin.math.min
  * and whole-frame changes treated as a lighting/camera change rather than an object change.
  */
 class ChangeDetector(
-    private val width: Int = 320,
+    private val width: Int = 480,
     private val cell: Int = 20,
     private val pixelThreshold: Int = 28,
-    private val cellFraction: Float = 0.12f,
+    private val cellFraction: Float = 0.08f,
     private val maxFrameFraction: Float = 0.5f,
 ) {
     data class Region(val box: Rect, val cropBox: Rect, val boxInCrop: Rect, val cells: Int)
@@ -46,12 +46,47 @@ class ChangeDetector(
         return out
     }
 
+    /** Camera shift of the last [compare]'s after-frame, in full-resolution pixels (after = before moved by this). */
+    var lastShiftX = 0; private set
+    var lastShiftY = 0; private set
+
+    /** Global translation minimising mean abs difference; handles a nudged or handheld camera. */
+    private fun shift(a: Gray, b: Gray, range: Int = 40): Pair<Int, Int> {
+        fun cost(dx: Int, dy: Int, step: Int): Float {
+            var s = 0L; var n = 0
+            var y = range
+            while (y < a.h - range) {
+                var x = range
+                while (x < a.w - range) { s += abs(a.px[y * a.w + x] - b.px[(y + dy) * a.w + x + dx]); n++; x += step }
+                y += step
+            }
+            return s.toFloat() / max(1, n)
+        }
+        var best = 0 to 0; var bestCost = cost(0, 0, 4)
+        for (dy in -range..range step 2) for (dx in -range..range step 2) {
+            val c = cost(dx, dy, 4); if (c < bestCost) { bestCost = c; best = dx to dy }
+        }
+        val (cx, cy) = best
+        for (dy in cy - 1..cy + 1) for (dx in cx - 1..cx + 1) {
+            if (abs(dx) > range || abs(dy) > range) continue
+            val c = cost(dx, dy, 2); if (c < bestCost) { bestCost = c; best = dx to dy }
+        }
+        return best
+    }
+
     /** [people] are boxes in [after]'s full-resolution coordinates. */
     fun compare(before: Bitmap, after: Bitmap, people: List<Rect> = emptyList()): List<Region> {
         val rows = max(1, (before.height.toFloat() / before.width * width / cell).toInt())
         val h = rows * cell
         val cols = width / cell
-        val a = gray(before, h); val b = gray(after, h)
+        val a = gray(before, h)
+        val bRaw = gray(after, h)
+        val (dx, dy) = shift(a, bRaw)
+        val b = if (dx == 0 && dy == 0) bRaw else Gray(width, h, IntArray(width * h) { i ->
+            val x = i % width + dx; val y = i / width + dy
+            if (x in 0 until width && y in 0 until h) bRaw.px[y * width + x] else a.px[i]
+        })
+        lastShiftX = (dx * before.width.toFloat() / width).toInt(); lastShiftY = (dy * before.height.toFloat() / h).toInt()
 
         val means = Array(2) { FloatArray(rows * cols) }
         for (cy in 0 until rows) for (cx in 0 until cols) {
@@ -65,8 +100,8 @@ class ChangeDetector(
         val sx = before.width.toFloat() / width; val sy = before.height.toFloat() / h
         val blocked = BooleanArray(rows * cols)
         for (p in people) {
-            val x0 = (p.left / sx / cell).toInt() - 1; val x1 = (p.right / sx / cell).toInt() + 1
-            val y0 = (p.top / sy / cell).toInt() - 1; val y1 = (p.bottom / sy / cell).toInt() + 1
+            val x0 = ((p.left - lastShiftX) / sx / cell).toInt() - 1; val x1 = ((p.right - lastShiftX) / sx / cell).toInt() + 1
+            val y0 = ((p.top - lastShiftY) / sy / cell).toInt() - 1; val y1 = ((p.bottom - lastShiftY) / sy / cell).toInt() + 1
             for (cy in max(0, y0)..min(rows - 1, y1)) for (cx in max(0, x0)..min(cols - 1, x1)) blocked[cy * cols + cx] = true
         }
 
@@ -80,7 +115,9 @@ class ChangeDetector(
             }
             val d = n > cellFraction * cell * cell
             if (d) changedCells++
-            differs[cy * cols + cx] = d && !blocked[cy * cols + cx]
+            // Windows/sky: auto-exposure makes them flicker, and nothing is ever placed on them.
+            val overexposed = max(means[0][cy * cols + cx], means[1][cy * cols + cx]) > 200
+            differs[cy * cols + cx] = d && !blocked[cy * cols + cx] && !overexposed
         }
         if (changedCells > maxFrameFraction * rows * cols) return emptyList()
 

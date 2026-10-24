@@ -21,11 +21,12 @@ class PersonDetector(context: Context) {
 
     fun detect(bmp: Bitmap): List<Rect> {
         val d = detector ?: return emptyList()
+        val argb = if (bmp.config == Bitmap.Config.ARGB_8888) bmp else bmp.copy(Bitmap.Config.ARGB_8888, false)
         return runCatching {
-            d.detect(BitmapImageBuilder(bmp).build()).detections().map { det ->
+            d.detect(BitmapImageBuilder(argb).build()).detections().map { det ->
                 val b = det.boundingBox()
                 Rect(b.left.toInt(), b.top.toInt(), b.right.toInt(), b.bottom.toInt())
             }
-        }.getOrDefault(emptyList())
+        }.onFailure { Log.w("GremmaPeople", "detect failed (${bmp.config})", it) }.getOrDefault(emptyList())
     }
 }

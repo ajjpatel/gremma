@@ -63,7 +63,7 @@ class GemmaService(private val context: Context) {
         Log.i(TAG, "rows raw: ${raw.take(600)}")
         return raw.lines().map { it.trim().trimStart('-', '*', ' ') }.filter { it.contains('|') }.map { line ->
             line.split('|').map { cell -> cell.trim().let { if (it == "-") "" else it } }
-        }
+        }.filter { it.first().lowercase() != "name" }
     }
 
     @OptIn(ExperimentalApi::class)
