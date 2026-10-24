@@ -78,6 +78,17 @@ class StoreTest(unittest.TestCase):
                 self.store.enforce_budget()
         self.assertTrue(self.store.path(clip_id).exists())
 
+    def test_partial_eviction_commits_before_unresolved_pressure_error(self):
+        pinned, evicted = self.clip(1), self.clip(2)
+        self.pressure(remove_bytes=300_000)
+        with self.store.lease_next("worker"):
+            with self.assertRaises(StorageFull):
+                self.store.enforce_budget()
+        self.assertTrue(self.store.path(pinned).exists())
+        self.assertFalse(self.store.path(evicted).exists())
+        self.assertIsNone(self.store.db.execute("SELECT id FROM clips WHERE id=?", (evicted,)).fetchone())
+        self.assertEqual(self.store.get_state("dropped_unprocessed_or_unsent"), 1)
+
     def test_active_partial_is_counted_and_never_evicted(self):
         old = self.clip()
         active = self.store.new_partial()
@@ -102,6 +113,9 @@ class StoreTest(unittest.TestCase):
             with self.assertRaises(StorageFull):
                 self.store.enforce_budget()
         self.assertFalse(self.store.path(clip_id).exists())
+
+        self.assertEqual(self.store.db.execute("SELECT count(*) FROM clips").fetchone()[0], 0)
+        self.assertEqual(self.store.get_state("dropped_unprocessed_or_unsent"), 1)
 
     def test_unknown_files_are_counted_but_never_deleted(self):
         unrelated = self.store.clips / "family.mp4"

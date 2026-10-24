@@ -175,8 +175,10 @@ class Store:
                     self.increment("dropped_unprocessed_or_unsent")
                     LOG.warning("retention evicted undelivered clip %s", row["id"])
                 self.db.execute("DELETE FROM clips WHERE id=?", (row["id"],))
-            if used > target or free < self.cfg.min_free_bytes + self.cfg.reserve_bytes:
-                raise StorageFull("no unlocked completed clips can satisfy storage budget/free-space reserve")
+        # File deletions cannot be rolled back. Commit their index removals and
+        # loss counters even if protected files still prevent enough recovery.
+        if used > target or free < self.cfg.min_free_bytes + self.cfg.reserve_bytes:
+            raise StorageFull("no unlocked completed clips can satisfy storage budget/free-space reserve")
 
     @staticmethod
     def _open_regular(path):

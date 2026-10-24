@@ -6,7 +6,7 @@ addresses are included in this repository.
 
 ## Completed checks
 
-- Local Python suite: 33 tests passed; one real-media test requires GStreamer.
+- Local Python suite: 34 tests passed; one real-media test requires GStreamer.
 - ARM64 board run after installing media dependencies: **34 tests passed** in
   15.83 seconds, including real GStreamer synthetic recording, playable MP4
   segments, graceful EOS, and FFmpeg motion extraction.
@@ -38,10 +38,12 @@ may be needed. These logs do not establish which component is at fault.
 
 ## Model runtime bring-up
 
-The CPU runtime installation is in progress. Default PyPI Linux ARM64 PyTorch
-wheels attempted to fetch CUDA dependencies; installation was stopped and
-switched to PyTorch's CPU wheel index. The first CPU download timed out and was
-retried. No model-inference or throughput result is claimed yet.
+Default PyPI Linux ARM64 PyTorch wheels attempted to fetch CUDA dependencies;
+installation was stopped and switched to PyTorch's CPU wheel index. After
+network timeouts, the `torch 2.14.1+cpu` ARM64 wheel downloaded successfully and
+passed its published SHA-256 check. Installation of the remaining dependencies
+was started, but SSH connectivity was lost before its result could be read.
+No model-inference or throughput result is claimed yet.
 
 ## Qualification still required
 

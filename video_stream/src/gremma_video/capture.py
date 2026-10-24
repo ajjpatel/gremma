@@ -147,7 +147,8 @@ def record(cfg: Config):
             store.set_state("recorder", {"state": "starting", "since_ns": time.time_ns()})
             result = pipeline.set_state(Gst.State.PLAYING)
             if result == Gst.StateChangeReturn.FAILURE:
-                raise RuntimeError("camera pipeline could not enter PLAYING")
+                failure = "camera pipeline could not enter PLAYING"
+                raise RuntimeError(failure)
             loop.run()
         finally:
             pipeline.set_state(Gst.State.NULL)
