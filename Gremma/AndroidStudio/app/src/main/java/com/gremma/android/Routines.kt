@@ -33,17 +33,70 @@ object Routines {
         return "${events.size} change${if (events.size == 1) "" else "s"} since ${clock(sinceMs)}. $lines$more"
     }
 
+    private val FLOOR = Regex("\\b(floor|ground|rug|carpet|doorway|stairs?|steps|hallway|walkway)\\b", RegexOption.IGNORE_CASE)
+
+    fun isFloor(location: String) = FLOOR.containsMatchIn(location)
+
+    fun hazardAlert(r: MemoryRecord): String = "Careful: a ${r.name} was left ${r.location}."
+
+    /** Things that appeared on the floor today and haven't been taken away since. */
+    fun floorItems(store: MemoryStore): List<MemoryRecord> {
+        val all = store.all()
+        return all.filter { it.timeMs >= startOfToday() && it.kind in setOf(MemoryKind.APPEARED, MemoryKind.MOVED) && isFloor(it.location) }
+            .filter { item -> all.none { it.kind == MemoryKind.REMOVED && it.timeMs > item.timeMs && it.name.equals(item.name, true) } }
+            .distinctBy { it.name.lowercase() }
+    }
+
+    /** Clips with a person, merged when less than 10 minutes apart. Doesn't try to identify who. */
+    fun visits(store: MemoryStore, sinceMs: Long = startOfToday()): List<Long> {
+        val times = store.activity().filter { it.people > 0 && it.timeMs >= sinceMs }.map { it.timeMs }.sorted()
+        val out = mutableListOf<Long>()
+        for (t in times) if (out.isEmpty() || t - out.last() > 10 * 60_000) out += t
+        return out
+    }
+
+    fun visitors(store: MemoryStore): String {
+        val v = visits(store)
+        return when {
+            v.isEmpty() -> "The home camera hasn't seen anyone today."
+            v.size == 1 -> "Someone was seen at ${clock(v[0])}."
+            else -> "People were seen ${v.size} times today, at ${v.takeLast(4).joinToString(", ") { clock(it) }}."
+        }
+    }
+
+    fun lastMovement(store: MemoryStore): String {
+        val last = store.activity().firstOrNull() ?: return "The home camera hasn't seen any movement yet."
+        val mins = (System.currentTimeMillis() - last.timeMs) / 60_000
+        val ago = when {
+            mins < 2 -> "just now"
+            mins < 60 -> "$mins minutes ago"
+            mins < 120 -> "an hour ago"
+            else -> "${mins / 60} hours ago"
+        }
+        return "The last movement was at ${clock(last.timeMs)}, $ago."
+    }
+
+    /** Non-null when no clip has arrived for [hours] during the day (alert for people living alone). */
+    fun inactivityAlert(store: MemoryStore, hours: Double): String? {
+        val last = store.activity().firstOrNull() ?: return null
+        val quietMs = System.currentTimeMillis() - last.timeMs
+        return if (quietMs >= hours * 3_600_000) "No movement seen since ${clock(last.timeMs)}." else null
+    }
+
     fun dailySummary(store: MemoryStore): String {
-        val today = store.all().filter { it.timeMs >= startOfToday() }
-        val events = today.filter { it.kind != MemoryKind.SEEN }
         val parts = mutableListOf<String>()
-        parts += if (events.isEmpty()) "The home camera saw no changes today." else "The home camera saw ${events.size} change${if (events.size == 1) "" else "s"} today."
-        events.filter { it.kind == MemoryKind.MOVED }.take(3).forEach { parts += "Your ${it.name} moved to ${it.location}." }
-        events.filter { it.kind == MemoryKind.REMOVED && !isMedicine(it.name) }.take(2).forEach { parts += "Your ${it.name} was taken from ${it.location}." }
-        events.filter { it.kind == MemoryKind.APPEARED }.take(2).forEach { parts += "Something new: ${it.name}, ${it.location}." }
-        parts += if (medicineTakenToday(store)) medicineStatus(store).substringBefore(" That may") else "I haven't seen your medicine picked up today."
-        val scans = today.count { it.kind == MemoryKind.SEEN }
-        if (scans > 0) parts += "You saved $scans things from photos."
+        val doses = store.all().filter { it.timeMs >= startOfToday() && isMedicine(it.name) && it.kind in setOf(MemoryKind.PICKED_UP, MemoryKind.REMOVED, MemoryKind.MOVED) }
+        parts += if (doses.isEmpty()) "I haven't seen your medicine taken today."
+            else "Today you took your medicine at ${doses.sortedBy { it.timeMs }.joinToString(" and ") { clock(it.timeMs) }}."
+        val clips = store.activity().count { it.timeMs >= startOfToday() }
+        parts += if (clips == 0) "The home camera saw no activity." else "The home camera saw activity $clips time${if (clips == 1) "" else "s"}."
+        val v = visits(store)
+        if (v.isNotEmpty()) parts += "Someone was around at ${v.takeLast(3).joinToString(", ") { clock(it) }}."
+        val events = store.all().filter { it.timeMs >= startOfToday() && it.kind != MemoryKind.SEEN && !isMedicine(it.name) }
+        events.filter { it.kind == MemoryKind.MOVED }.take(2).forEach { parts += "Your ${it.name} moved to ${it.location}." }
+        events.filter { it.kind == MemoryKind.REMOVED }.take(2).forEach { parts += "Your ${it.name} was taken from ${it.location}." }
+        val floor = floorItems(store)
+        parts += if (floor.isEmpty()) "Nothing was left on the floor." else floor.take(3).joinToString(" ") { "A ${it.name} is still ${it.location}." }
         return parts.joinToString(" ")
     }
 }

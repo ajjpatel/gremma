@@ -22,7 +22,7 @@ class ClipProcessor(
 ) {
     private val detector = ChangeDetector()
 
-    data class Outcome(val events: List<MemoryRecord>, val note: String)
+    data class Outcome(val events: List<MemoryRecord>, val note: String, val hazards: List<MemoryRecord> = emptyList())
 
     suspend fun process(clip: File, room: String = ""): Outcome {
         val frames = frames(clip)
@@ -64,8 +64,11 @@ class ClipProcessor(
         // Lifted and put back: visible in a middle frame, gone by the last frame (e.g. the pill bottle).
         val finalBoxes = final.map { it.box }
         val lifted = mutableListOf<ChangeDetector.Region>()
+        var maxPeople = maxOf(firstPeople.size, lastPeople.size)
         for (mid in frames.subList(1, frames.size - 1)) {
-            for (r in detector.compare(first, mid, firstPeople + people.detect(mid))) {
+            val midPeople = people.detect(mid)
+            maxPeople = maxOf(maxPeople, midPeople.size)
+            for (r in detector.compare(first, mid, firstPeople + midPeople)) {
                 if (finalBoxes.none { Rect.intersects(it, r.box) } && lifted.none { Rect.intersects(it.box, r.box) }) lifted += r
             }
         }
@@ -79,8 +82,10 @@ class ClipProcessor(
 
         val indexed = events.map { it.copy(embedding = embedder.embed(it.sentence(), isQuery = false)) }
         store.addAll(indexed)
+        store.addActivity(Activity(time, maxPeople, room))
         val note = if (indexed.isEmpty()) "Clip ${clip.name}: no lasting change." else indexed.joinToString(" ") { it.spoken() }
-        return Outcome(indexed, note)
+        val hazards = indexed.filter { it.kind in setOf(MemoryKind.APPEARED, MemoryKind.MOVED) && Routines.isFloor(it.location) }
+        return Outcome(indexed, note, hazards)
     }
 
     data class Naming(val name: String, val details: String, val on: String)

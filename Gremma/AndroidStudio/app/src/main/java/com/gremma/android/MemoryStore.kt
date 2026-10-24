@@ -12,7 +12,23 @@ class MemoryStore(context: Context) {
     private val file = File(dir, "memory.json")
     private var records: MutableList<MemoryRecord> = load()
 
+    private val activityFile = File(dir, "activity.json")
+    private var activity: MutableList<Activity> = loadActivity()
+
     @Synchronized fun all(): List<MemoryRecord> = records.sortedByDescending { it.timeMs }
+
+    /** One entry per board clip, whether or not anything changed. */
+    @Synchronized fun addActivity(a: Activity) {
+        activity.add(a)
+        activityFile.writeText(JSONArray().apply { activity.forEach { put(JSONObject().put("timeMs", it.timeMs).put("people", it.people).put("room", it.room)) } }.toString())
+    }
+
+    @Synchronized fun activity(): List<Activity> = activity.sortedByDescending { it.timeMs }
+
+    private fun loadActivity(): MutableList<Activity> = runCatching {
+        val a = JSONArray(activityFile.readText())
+        MutableList(a.length()) { i -> a.getJSONObject(i).let { Activity(it.getLong("timeMs"), it.getInt("people"), it.optString("room")) } }
+    }.getOrElse { mutableListOf() }
 
     @Synchronized fun nextId(): Long = (records.maxOfOrNull { it.id } ?: 0) + 1
 
@@ -22,7 +38,10 @@ class MemoryStore(context: Context) {
 
     @Synchronized fun delete(id: Long) { records.removeAll { it.id == id }; persist() }
 
-    @Synchronized fun clear() { records.clear(); persist(); evidenceDir.listFiles()?.forEach { it.delete() } }
+    @Synchronized fun clear() {
+        records.clear(); persist(); evidenceDir.listFiles()?.forEach { it.delete() }
+        activity.clear(); activityFile.delete()
+    }
 
     fun saveImage(bytes: ByteArray, name: String): String {
         File(evidenceDir, name).writeBytes(bytes)

@@ -1,7 +1,7 @@
 package com.gremma.android
 
 /** Trimmed from the iOS AgentCoordinator: deterministic keyword routing, Gemma chat for everything else. */
-enum class Action { FIND, REMEMBER, DESCRIBE, READ_TEXT, READ_MEDICINE, READ_EXPIRY, WHAT_CHANGED, MEDICINE_STATUS, SUMMARY, LIST, CHAT }
+enum class Action { FIND, REMEMBER, DESCRIBE, READ_TEXT, READ_MEDICINE, READ_EXPIRY, WHAT_CHANGED, MEDICINE_STATUS, SUMMARY, LIST, VISITORS, LAST_MOVEMENT, HAZARDS, CHAT }
 
 object Router {
     private fun has(q: String, vararg words: String) = words.any { Regex("\\b$it").containsMatchIn(q) }
@@ -16,6 +16,9 @@ object Router {
             medWord && has(q, "take", "took", "taken", "had", "did i", "should i", "can i", "again") -> Action.MEDICINE_STATUS
             has(q, "what changed", "what has changed", "anything change", "anything new", "what's new", "while i was", "what happened", "any changes") -> Action.WHAT_CHANGED
             has(q, "summary", "summari", "my day", "recap") -> Action.SUMMARY
+            has(q, "visitor", "anyone come", "anybody come", "someone come", "who came", "did anyone", "was anyone", "came in", "come over") -> Action.VISITORS
+            has(q, "movement", "moving", "activity", "inactiv", "quiet") -> Action.LAST_MOVEMENT
+            has(q, "floor", "trip", "hazard", "in the way", "in my way") -> Action.HAZARDS
             has(q, "remember", "save this", "memorize", "memorise", "scan the room", "scan this") -> Action.REMEMBER
             has(q, "describe", "what do you see", "what's in front", "what is in front", "look around", "what is this", "what's this", "where am i") -> Action.DESCRIBE
             has(q, "what do you remember", "list my", "list everything", "what have you seen") -> Action.LIST

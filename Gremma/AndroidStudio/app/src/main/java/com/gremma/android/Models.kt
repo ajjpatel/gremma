@@ -57,4 +57,7 @@ fun startOfToday(): Long = Calendar.getInstance().apply {
     set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
 }.timeInMillis
 
+/** A board clip happened at [timeMs]; [people] = most people seen in any sampled frame. */
+data class Activity(val timeMs: Long, val people: Int, val room: String = "")
+
 data class ChatLine(val fromUser: Boolean, val text: String, val image: String? = null)

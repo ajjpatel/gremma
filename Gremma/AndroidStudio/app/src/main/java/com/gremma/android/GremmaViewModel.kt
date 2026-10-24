@@ -160,6 +160,12 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
                 Action.MEDICINE_STATUS -> say(Routines.medicineStatus(store),
                     store.all().firstOrNull { Routines.isMedicine(it.name) && it.timeMs >= startOfToday() }?.evidenceImage)
                 Action.SUMMARY -> say(Routines.dailySummary(store))
+                Action.VISITORS -> say(Routines.visitors(store))
+                Action.LAST_MOVEMENT -> say(Routines.lastMovement(store))
+                Action.HAZARDS -> Routines.floorItems(store).let { items ->
+                    say(if (items.isEmpty()) "I haven't seen anything left on the floor today."
+                        else items.take(3).joinToString(" ") { "A ${it.name} is ${it.location}, since ${clock(it.timeMs)}." }, items.firstOrNull()?.evidenceImage)
+                }
                 Action.LIST -> {
                     val seen = store.all().distinctBy { it.name.lowercase() }.take(10)
                     say(if (seen.isEmpty()) "I don't remember anything yet." else "I remember: " + seen.joinToString(", ") { it.name } + ".")
@@ -235,13 +241,30 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
                     done += clip.name; prefs.edit().putStringSet("clipsDone", done.toSet()).apply()
                     refresh()
                     outcome?.events?.firstOrNull()?.let { say("Home camera: " + outcome.note, it.evidenceImage, speak = false) }
+                    outcome?.hazards?.firstOrNull()?.let { say(Routines.hazardAlert(it), it.evidenceImage) }
+                    prefs.edit().remove("quietAlertFor").apply()
                     status("Ready.", busy = false)
                 }
             }
             checkMedicineReminder()
+            checkInactivity()
             delay(3000)
         }
     }
+
+    /** Daytime only; one alert per quiet stretch. Threshold in minutes, default 3 hours (set lower for the demo). */
+    private fun checkInactivity() {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        if (hour < 8 || hour >= 22) return
+        val last = store.activity().firstOrNull()?.timeMs ?: return
+        if (prefs.getLong("quietAlertFor", 0) == last) return
+        Routines.inactivityAlert(store, prefs.getInt("quietMin", 180) / 60.0)?.let {
+            prefs.edit().putLong("quietAlertFor", last).apply()
+            say("Alert: $it")
+        }
+    }
+
+    fun setQuietMinutes(min: Int) = prefs.edit().putInt("quietMin", min).apply()
 
     private fun newest(f: File): Long = if (f.isDirectory) f.listFiles()?.maxOfOrNull { it.lastModified() } ?: f.lastModified() else f.lastModified()
 

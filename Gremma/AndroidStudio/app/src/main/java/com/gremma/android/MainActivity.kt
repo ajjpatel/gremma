@@ -87,6 +87,7 @@ class MainActivity : ComponentActivity() {
         intent?.getStringExtra("image")?.let { path ->
             vm.askWithImage(Action.valueOf(intent.getStringExtra("action") ?: "DESCRIBE"), path)
         }
+        if (intent?.hasExtra("quietMin") == true) vm.setQuietMinutes(intent.getIntExtra("quietMin", 180))
         intent?.removeExtra("ask"); intent?.removeExtra("image")
     }
 }
@@ -142,7 +143,7 @@ fun GremmaScreen(vm: GremmaViewModel) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(Action.REMEMBER to "Remember", Action.DESCRIBE to "Describe", Action.READ_TEXT to "Read",
                         Action.READ_MEDICINE to "Medicine label", Action.WHAT_CHANGED to "What changed", Action.MEDICINE_STATUS to "Meds today?",
-                        Action.SUMMARY to "My day").forEach { (a, label) ->
+                        Action.VISITORS to "Visitors?", Action.SUMMARY to "My day").forEach { (a, label) ->
                         OutlinedButton(onClick = { vm.quick(a) }, enabled = !state.busy) { Text(label) }
                     }
                 }
