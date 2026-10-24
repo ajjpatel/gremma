@@ -1,0 +1,12 @@
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+data/
+models/
+*.sqlite3*
+*.partial.mp4
+config.local.toml
+dist/
+build/

@@ -1,0 +1,32 @@
+# Linux/VENTUNO Q profile. Validate source caps and V4L2 controls on YOUR image.
+# Relative paths are resolved against this file's location.
+storage_dir = "./data"
+device_id = "oracle-01"
+max_bytes = 16000000000
+reserve_bytes = 256000000
+min_free_bytes = 1000000000
+segment_seconds = 5
+max_segment_bytes = 64000000
+
+source = 'qtiqmmfsrc camera=0 name=camera video_0::type=preview ! video/x-raw,format=NV12_Q08C,width=1920,height=1080,framerate=30/1'
+encoder = 'v4l2h264enc capture-io-mode=4 output-io-mode=5 extra-controls="controls,video_bitrate=4000000,video_gop_size=30,video_gop_closure=1,video_b_frames=0"'
+
+model_path = "./models/embeddinggemma-2"
+# Set to the downloaded Hugging Face commit SHA; change this when weights change.
+model_revision = "local-snapshot"
+model_threads = 4
+inference_timeout_seconds = 90
+# Calibration values, NOT validated probabilities or action-recognition accuracy.
+novelty_threshold = 0.08
+motion_threshold = 0.015
+heartbeat_seconds = 60
+selection_mode = "observe" # Switch to "filter" only after recall evaluation.
+
+# Optional proposed receiver contract in docs/receiver-contract.md.
+# Leave empty until the Pixel receiver implements it. Nothing uploads by default.
+upload_url = ""
+upload_token_env = "GREMMA_UPLOAD_TOKEN"
+upload_ca_file = "" # Optional CA PEM for a private/local receiver.
+upload_timeout_seconds = 30
+ffmpeg = "ffmpeg"
+ffprobe = "ffprobe"
