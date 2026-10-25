@@ -5,6 +5,7 @@ not acknowledge a clip. No raw footage is sent unless upload_url is configured.
 """
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import http.client
 import json
 import logging
@@ -30,10 +31,60 @@ def metadata(store, row, digest):
             "selection": json.loads(row["decision"]) if row["decision"] else {"reasons": ["analysis_unavailable"]}}
 
 
-def send_clip(cfg, row, handle, meta):
+def _token(cfg):
     token = os.environ.get(cfg.upload_token_env, "")
     if not token or any(c in token for c in "\r\n"):
         raise ValueError("upload bearer token is missing or invalid")
+    return token
+
+
+def _connection(cfg):
+    if not cfg.upload_url:
+        raise ValueError("upload_url is not configured")
+    url = urlsplit(cfg.upload_url)
+    if cfg.upload_cert_sha256:
+        # A paired phone's exact certificate is its identity, independent of its DHCP address.
+        # Verify it before sending HTTP headers, bearer credentials, or video bytes.
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    else:
+        context = ssl.create_default_context(cafile=cfg.upload_ca_file or None)
+    return http.client.HTTPSConnection(url.hostname, url.port or 443,
+                                       timeout=cfg.upload_timeout_seconds, context=context)
+
+
+def _verify_peer(cfg, conn):
+    if cfg.upload_cert_sha256:
+        conn.connect()
+        actual = hashlib.sha256(conn.sock.getpeercert(binary_form=True)).hexdigest()
+        if not hmac.compare_digest(actual, cfg.upload_cert_sha256):
+            raise ssl.SSLCertVerificationError("receiver certificate does not match the paired Pixel")
+
+
+def check_upload(cfg):
+    """Verify phone pairing with a small authenticated request and no footage."""
+    from dataclasses import replace
+    token = _token(cfg)
+    cfg = replace(cfg, upload_timeout_seconds=min(10, cfg.upload_timeout_seconds))
+    conn = _connection(cfg)
+    try:
+        _verify_peer(cfg, conn)
+        conn.request("GET", "/v1/health", headers={"Authorization": f"Bearer {token}"})
+        response = conn.getresponse()
+        body = response.read(8193)
+        if response.status != 200 or len(body) > 8192:
+            raise RuntimeError(f"receiver health check failed: HTTP {response.status}")
+        result = json.loads(body)
+        if result.get("schema_version") != 1 or result.get("ready") is not True:
+            raise RuntimeError("receiver does not support the clip-upload contract")
+        return {"receiver_ready": True, "upload_url": cfg.upload_url}
+    finally:
+        conn.close()
+
+
+def send_clip(cfg, row, handle, meta):
+    token = _token(cfg)
     boundary = uuid.uuid4().hex
     prefix = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\n"
               "Content-Type: application/json\r\n\r\n").encode() + json.dumps(meta).encode()
@@ -41,9 +92,7 @@ def send_clip(cfg, row, handle, meta):
                f"filename=\"{row['id']}.mp4\"\r\nContent-Type: video/mp4\r\n\r\n").encode()
     suffix = f"\r\n--{boundary}--\r\n".encode()
     url = urlsplit(cfg.upload_url)
-    context = ssl.create_default_context(cafile=cfg.upload_ca_file or None)
-    conn = http.client.HTTPSConnection(url.hostname, url.port or 443,
-                                     timeout=cfg.upload_timeout_seconds, context=context)
+    conn = _connection(cfg)
     deadline = time.monotonic() + cfg.upload_timeout_seconds
 
     def remaining():
@@ -54,6 +103,8 @@ def send_clip(cfg, row, handle, meta):
             conn.sock.settimeout(value)
 
     try:
+        _verify_peer(cfg, conn)
+        remaining()
         # No redirect following: credentials and video stay on the chosen host.
         target = url.path or "/"
         if url.query:
@@ -72,6 +123,7 @@ def send_clip(cfg, row, handle, meta):
             conn.send(block)
         remaining()
         conn.send(suffix)
+        remaining()
         response = conn.getresponse()
         remaining()
         body = response.read(65537)
@@ -96,7 +148,7 @@ def upload_one(store, sender=send_clip):
             delay = min(300, 2 ** min(row["attempts"] + 1, 9))
             store.db.execute("UPDATE clips SET attempts=attempts+1,retry_after=? WHERE id=?",
                              (time.time() + delay, row["id"]))
-            LOG.warning("upload retry %s in %ss (%s)", row["id"], delay, type(exc).__name__)
+            LOG.warning("upload retry %s in %ss (%s: %s)", row["id"], delay, type(exc).__name__, str(exc)[:200])
         else:
             store.db.execute("UPDATE clips SET upload='sent' WHERE id=?", (row["id"],))
             store.set_state("uploader", {"last_clip_id": row["id"], "acknowledged_at_ns": time.time_ns()})

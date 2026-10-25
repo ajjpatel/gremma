@@ -20,7 +20,8 @@ import kotlin.math.min
 class PoseDetector(context: Context) {
     data class Hand(val side: String, val crop: Rect)
 
-    private val landmarker: PoseLandmarker? = (listOf(Delegate.GPU, Delegate.CPU)).firstNotNullOfOrNull { delegate ->
+    // CPU: the GPU delegate saved ~3 s per clip but cost ~60 s to initialise on every app start.
+    private val landmarker: PoseLandmarker? = listOf(Delegate.CPU).firstNotNullOfOrNull { delegate ->
         runCatching {
             PoseLandmarker.createFromOptions(context, PoseLandmarker.PoseLandmarkerOptions.builder()
                 .setBaseOptions(BaseOptions.builder().setModelAssetPath("pose_landmarker_full.task").setDelegate(delegate).build())

@@ -1,5 +1,7 @@
 from dataclasses import replace
 import json
+import hashlib
+import ssl
 import math
 import multiprocessing
 from pathlib import Path
@@ -14,7 +16,7 @@ from gremma_video.capture import recover
 from gremma_video.config import Config, load_config
 from gremma_video.selection import decide, normalize
 from gremma_video.storage import Store, StorageFull
-from gremma_video.upload import send_clip, upload_one
+from gremma_video.upload import check_upload, send_clip, upload_one
 from gremma_video.worker import Embedder, process_one
 
 
@@ -301,6 +303,46 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(len(sent), int(headers["Content-Length"]))
         self.assertIn(b'"clip_id": "' + clip_id.encode() + b'"', sent)
         self.assertEqual(self.store.db.execute("SELECT upload FROM clips").fetchone()[0], "sent")
+
+    def test_wrong_phone_certificate_sends_no_token_or_video(self):
+        self.clip()
+        self.store.db.execute("UPDATE clips SET upload='pending'")
+        self.store.cfg = replace(self.cfg, upload_url="https://phone.local:8443/v1/clips",
+                                 upload_cert_sha256="0" * 64)
+        conn = Mock()
+        conn.sock.getpeercert.return_value = b"unpaired-certificate"
+        with patch.dict("os.environ", {"GREMMA_UPLOAD_TOKEN": "test"}), patch(
+                "gremma_video.upload.http.client.HTTPSConnection", return_value=conn):
+            upload_one(self.store)
+        conn.putrequest.assert_not_called()
+        conn.putheader.assert_not_called()
+        conn.send.assert_not_called()
+        self.assertEqual(self.store.db.execute("SELECT upload FROM clips").fetchone()[0], "pending")
+
+    def test_paired_phone_health_check_sends_no_footage(self):
+        certificate = b"paired-phone-certificate"
+        cfg = replace(self.cfg, upload_url="https://phone.local:8443/v1/clips",
+                      upload_cert_sha256=hashlib.sha256(certificate).hexdigest())
+        conn = Mock()
+        conn.sock.getpeercert.return_value = certificate
+        conn.getresponse.return_value = Mock(status=200)
+        conn.getresponse.return_value.read.return_value = b'{"schema_version": 1, "ready": true}'
+        with patch.dict("os.environ", {"GREMMA_UPLOAD_TOKEN": "test"}), patch(
+                "gremma_video.upload.http.client.HTTPSConnection", return_value=conn):
+            self.assertTrue(check_upload(cfg)["receiver_ready"])
+        conn.connect.assert_called_once()
+        conn.request.assert_called_once_with("GET", "/v1/health", headers={"Authorization": "Bearer test"})
+        conn.send.assert_not_called()
+
+    def test_health_check_rejects_wrong_certificate_before_authentication(self):
+        cfg = replace(self.cfg, upload_url="https://phone.local:8443/v1/clips", upload_cert_sha256="0" * 64)
+        conn = Mock()
+        conn.sock.getpeercert.return_value = b"wrong"
+        with patch.dict("os.environ", {"GREMMA_UPLOAD_TOKEN": "test"}), patch(
+                "gremma_video.upload.http.client.HTTPSConnection", return_value=conn):
+            with self.assertRaises(ssl.SSLCertVerificationError):
+                check_upload(cfg)
+        conn.request.assert_not_called()
 
 
 class SelectionTest(unittest.TestCase):

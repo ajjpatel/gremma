@@ -43,10 +43,10 @@ class ClipProcessor(
 
     data class Outcome(val events: List<MemoryRecord>, val note: String, val hazards: List<MemoryRecord> = emptyList())
 
+    /** [clip] is an .mp4, a board upload directory (video.mp4 + metadata.json), or a folder of frames. Throws if unreadable, so it is retried. */
     suspend fun process(clip: File, room: String = "", onSaved: () -> Unit = {}): Outcome {
-        val src = runCatching { FrameSource(clip) }.onFailure { Log.w(TAG, "could not read ${clip.name}", it) }.getOrNull()
-            ?: return Outcome(emptyList(), "Clip ${clip.name}: could not read it.")
-        src.use { return process(clip, it, room, onSaved) }
+        val video = File(clip, "video.mp4").takeIf { clip.isDirectory && it.isFile } ?: clip
+        FrameSource(video).use { return process(clip, it, room, onSaved) }
     }
 
     private suspend fun process(clip: File, src: FrameSource, room: String, onSaved: () -> Unit): Outcome {
@@ -62,7 +62,7 @@ class ClipProcessor(
             if (t == times.first() || t == times.last() || t in midAt) kept += t to f
             for (h in pose.hands(f)) spots += Spot(t, h.side, h.crop, thumb(f, h.crop))
         }
-        if (kept.size < 2) return Outcome(emptyList(), "Clip ${clip.name}: not enough frames.")
+        check(kept.size >= 2) { "Clip ${clip.name}: not enough readable frames." }
         val frames = kept.map { it.second }
         val first = frames.first(); val last = frames.last()
         val t0 = startTime(clip, dur)
@@ -284,7 +284,8 @@ class ClipProcessor(
     private fun startTime(clip: File, durMs: Long): Long {
         val now = System.currentTimeMillis()
         val board = runCatching {
-            val meta = JSONObject(File(clip.parentFile, clip.nameWithoutExtension + ".json").readText())
+            val metaFile = if (clip.isDirectory) File(clip, "metadata.json") else File(clip.parentFile, clip.nameWithoutExtension + ".json")
+            val meta = JSONObject(metaFile.readText())
             OffsetDateTime.parse(meta.getString("started_at")).toInstant().toEpochMilli()
         }.getOrNull()
         // An unsynced board clock (e.g. 1970) would scatter events; trust it only if it's near today.

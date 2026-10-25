@@ -11,6 +11,8 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +25,9 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Calendar
+import java.util.UUID
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 data class GremmaState(
     val status: String = "Starting…",
@@ -34,7 +39,7 @@ data class GremmaState(
     val heard: String = "",
     val cameraRequest: Action? = null,
     val lastMs: Long = 0,
-    val boardUrl: String = "",
+    val camera: CameraLink = CameraLink(),
 )
 
 /** Lives as long as the process (kept alive by [WatchService]), so clips are handled with the screen closed. */
@@ -57,23 +62,64 @@ class GremmaCore(private val app: Application) {
 
     /** adb push models here: /sdcard/Android/data/com.gremma.android/files/models/ */
     private val modelDirs = listOfNotNull(app.getExternalFilesDir("models"), File(app.filesDir, "Models").apply { mkdirs() })
-    /** The board's clips land here (HTTP upload / adb push / Import clip). */
+    /** Clips from adb push / Import clip land here. */
     val inbox: File = (app.getExternalFilesDir("clips") ?: File(app.filesDir, "clips")).apply { mkdirs() }
+    /** The board's HTTPS uploads land here, one directory per clip (video.mp4 + metadata.json). */
+    private val boardInbox = File(app.filesDir, "board-clips").apply { mkdirs() }
     private val clipsDone = prefs.getStringSet("clipsDone", emptySet())!!.toMutableSet()
+    private val receiverLock = Mutex()
+    @Volatile private var receiverRequested = false
+    @Volatile private var receiver: HomeCameraReceiver? = null
 
-    /** The board posts clips here; set GREMMA_UPLOAD_TOKEN on the board to the same token. */
-    val uploadToken: String get() = prefs.getString("uploadToken", null) ?: "gremma-demo"
-    val receiver = ClipReceiver(inbox, token = { uploadToken })
+    fun startCameraReceiver() {
+        receiverRequested = true
+        scope.launch(Dispatchers.IO) {
+            receiverLock.withLock {
+                if (!receiverRequested || receiver != null) return@withLock
+                var next: HomeCameraReceiver? = null
+                try {
+                    val created = HomeCameraReceiver(app, boardInbox) { message ->
+                        _state.update { it.copy(camera = it.camera.copy(status = message)) }
+                    }
+                    next = created
+                    created.start()
+                    receiver = created
+                    if (!receiverRequested || !currentCoroutineContext().isActive) {
+                        created.stop(); receiver = null
+                        return@withLock
+                    }
+                    val link = created.link()
+                    _state.update { it.copy(camera = link) }
+                } catch (e: Exception) {
+                    next?.stop()
+                    _state.update { it.copy(camera = CameraLink(status = "Camera receiver unavailable: ${e.message}")) }
+                }
+            }
+        }
+    }
+
+    fun stopCameraReceiver() {
+        receiverRequested = false
+        scope.launch(Dispatchers.IO) {
+            receiverLock.withLock {
+                if (receiverRequested) return@withLock
+                receiver?.stop(); receiver = null
+                _state.update { it.copy(camera = it.camera.copy(running = false, status = "Camera receiver stopped.")) }
+            }
+        }
+    }
+
+    fun refreshCameraAddress() {
+        _state.update { it.copy(camera = it.camera.copy(endpoint = HomeCameraReceiver.endpoint())) }
+    }
 
     init {
         refresh()
-        receiver.start()
-        _state.update { it.copy(boardUrl = receiver.url) }
+        // Always on while the process lives (WatchService keeps it alive), not only while the screen is open.
+        startCameraReceiver()
         scope.launch { loadModels() }
         scope.launch { watchInbox() }
     }
-
-    fun setUploadToken(token: String) = prefs.edit().putString("uploadToken", token).apply()
 
     private fun refresh() = _state.update { it.copy(records = store.all()) }
 
@@ -131,8 +177,15 @@ class GremmaCore(private val app: Application) {
     }
 
     fun importClip(uri: Uri) = scope.launch(Dispatchers.IO) {
-        val name = displayName(uri) ?: "clip_${System.currentTimeMillis()}.mp4"
-        app.contentResolver.openInputStream(uri)?.use { input -> File(inbox, name).outputStream().use { input.copyTo(it) } }
+        val name = File(displayName(uri) ?: "clip.mp4").name
+        val staging = File(inbox, ".import-${UUID.randomUUID()}")
+        try {
+            app.contentResolver.openInputStream(uri)?.use { input ->
+                staging.outputStream().use { output -> input.copyTo(output); output.fd.sync() }
+            } ?: error("Could not open the video")
+            Files.move(staging.toPath(), File(inbox, "${UUID.randomUUID()}_$name").toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: Exception) { status("Clip import failed: ${e.message}", busy = false) }
+        finally { staging.delete() }
     }
 
     private fun displayName(uri: Uri): String? = app.contentResolver.query(uri, null, null, null, null)?.use { c ->
@@ -242,23 +295,34 @@ class GremmaCore(private val app: Application) {
     // ---- Board clips ----
 
     private suspend fun watchInbox() {
+        val retryAfter = mutableMapOf<String, Long>()
         while (true) {
-            _state.update { it.copy(boardUrl = receiver.url) }
-            val ready = inbox.listFiles()?.filter { f ->
+            val ready = (inbox.listFiles().orEmpty().toList() + boardInbox.listFiles().orEmpty().toList()).filter { f ->
                 f.name !in clipsDone && !f.name.startsWith(".") &&
+                    System.currentTimeMillis() >= (retryAfter[f.name] ?: 0) &&
                     (f.isDirectory || f.extension.lowercase() in setOf("mp4", "mov", "mkv", "webm")) &&
-                    System.currentTimeMillis() - newest(f) > 3000
-            }?.sortedBy { it.lastModified() }.orEmpty()
+                    (f.parentFile == boardInbox || System.currentTimeMillis() - newest(f) > 3000)
+            }.sortedBy { File(it, "video.mp4").takeIf { f -> f.isFile }?.lastModified() ?: it.lastModified() }
             for (clip in ready) {
                 if (!gemma.isReady) break
                 // Not under [work]: questions take turns with the clip's Gemma calls instead of waiting for the whole clip.
                 status("Looking at new activity from the home camera…")
-                val outcome = runCatching { withContext(Dispatchers.Default) { clips.process(clip, onSaved = ::refresh) } }
-                    .onFailure { Log.e("Gremma", "clip failed", it) }.getOrNull()
-                clipsDone += clip.name; prefs.edit().putStringSet("clipsDone", clipsDone.toSet()).apply()
+                val outcome = try { withContext(Dispatchers.Default) { clips.process(clip, onSaved = ::refresh) } }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (e: Exception) {
+                    Log.e("Gremma", "clip failed", e)
+                    retryAfter[clip.name] = System.currentTimeMillis() + 60_000
+                    _state.update { it.copy(camera = it.camera.copy(status = "Clip processing failed; saved for retry.")) }
+                    status("Camera clip saved. Processing will retry.")
+                    continue
+                }
+                clipsDone += clip.name
+                prefs.edit().putStringSet("clipsDone", clipsDone.toSet()).commit()
+                retryAfter.remove(clip.name)
                 refresh()
-                outcome?.events?.firstOrNull()?.let { say("Home camera: " + outcome.note, it.evidenceImage, speak = false) }
-                outcome?.hazards?.firstOrNull()?.let { say(Routines.hazardAlert(it), it.evidenceImage) }
+                outcome.events.firstOrNull()?.let { say("Home camera: " + outcome.note, it.evidenceImage, speak = false) }
+                outcome.hazards.firstOrNull()?.let { say(Routines.hazardAlert(it), it.evidenceImage) }
+                _state.update { it.copy(camera = it.camera.copy(status = "Last camera clip processed.")) }
                 prefs.edit().remove("quietAlertFor").apply()
                 if (!_state.value.busy) status("Ready.")
             }

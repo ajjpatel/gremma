@@ -4,6 +4,7 @@ import android.Manifest
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -26,9 +27,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -85,6 +88,18 @@ class MainActivity : ComponentActivity() {
         handle(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        vm.startCameraReceiver()
+    }
+
+    override fun onStop() {
+        // The receiver keeps running in WatchService; only the screen-on flag follows the activity.
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        super.onStop()
+    }
+
     /** adb shell am start -n com.gremma.android/.MainActivity --es ask "where are my keys" */
     private fun handle(intent: android.content.Intent?) {
         intent?.getStringExtra("ask")?.let { vm.ask(it) }
@@ -92,7 +107,6 @@ class MainActivity : ComponentActivity() {
             vm.askWithImage(Action.valueOf(intent.getStringExtra("action") ?: "DESCRIBE"), path)
         }
         if (intent?.hasExtra("quietMin") == true) vm.setQuietMinutes(intent.getIntExtra("quietMin", 180))
-        intent?.getStringExtra("token")?.let { vm.setUploadToken(it) }
         intent?.removeExtra("ask"); intent?.removeExtra("image")
     }
 }
@@ -104,6 +118,31 @@ fun GremmaScreen(vm: GremmaCore) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var photoUri by remember { mutableStateOf<Uri?>(null) }
     var photoAction by remember { mutableStateOf<Action?>(null) }
+    var showCamera by remember { mutableStateOf(false) }
+    var pairingCopied by remember { mutableStateOf(false) }
+
+    if (showCamera) {
+        AlertDialog(onDismissRequest = { showCamera = false }, title = { Text("Home camera") }, text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(state.camera.status)
+                Text("Keep this phone on the same Wi-Fi as the camera. Gremma keeps receiving in the background; clips are saved before processing and resume after a restart.")
+                Text(state.camera.endpoint.ifBlank { "Connect this phone to Wi-Fi, then reopen this setup screen." })
+                if (state.camera.running) {
+                    OutlinedButton(enabled = state.camera.endpoint.isNotBlank(), onClick = {
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        val clip = android.content.ClipData.newPlainText("Gremma camera pairing", state.camera.pairingText())
+                        clip.description.extras = android.os.PersistableBundle().apply {
+                            putBoolean("android.content.extra.IS_SENSITIVE", true)
+                        }
+                        clipboard.setPrimaryClip(clip)
+                        pairingCopied = true
+                    }) { Text(if (pairingCopied) "Board setup copied" else "Copy board setup") }
+                } else {
+                    OutlinedButton(onClick = vm::startCameraReceiver) { Text("Start receiver") }
+                }
+            }
+        }, confirmButton = { TextButton(onClick = { showCamera = false }) { Text("Done") } })
+    }
 
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) vm.voice.listen() }
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
@@ -126,6 +165,7 @@ fun GremmaScreen(vm: GremmaCore) {
         Column(Modifier.fillMaxSize().padding(pad).padding(horizontal = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Gremma", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                TextButton(onClick = { vm.refreshCameraAddress(); pairingCopied = false; showCamera = true }) { Text("Camera") }
                 Spacer(Modifier.width(8.dp))
                 Text(listOfNotNull(state.modelName?.removeSuffix(".litertlm"), if (state.indexReady) "index on" else null,
                     if (state.lastMs > 0) "${state.lastMs} ms" else null).joinToString(" · "), color = Color.Gray, fontSize = 12.sp)
@@ -166,7 +206,6 @@ fun GremmaScreen(vm: GremmaCore) {
                     modifier = Modifier.fillMaxWidth().height(84.dp).semantics { contentDescription = "Talk to Gremma" },
                 ) { Text(if (state.busy) "Working…" else "🎤  Tap and ask", fontSize = 24.sp, color = Color.Black) }
             } else {
-                Text("Home camera uploads to ${state.boardUrl} · token ${vm.uploadToken}", color = Color.Gray, fontSize = 12.sp)
                 Row(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = { pickClip.launch(arrayOf("video/*")) }) { Text("Import clip") }
                     OutlinedButton(onClick = { pickModel.launch(arrayOf("*/*")) }) { Text("Add model") }

@@ -1,0 +1,48 @@
+name: Clip upload integration
+
+on:
+  pull_request:
+    paths:
+      - 'video_stream/**'
+      - 'Gremma/AndroidStudio/**'
+      - '.github/workflows/clip-upload.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clip-upload-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  receiver-and-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile the real receiver for the upload integration tests
+        shell: bash
+        run: |
+          mkdir -p .build/receiver-validation/classes
+          curl --fail --retry 2 -o .build/receiver-validation/nanohttpd.jar https://repo.maven.apache.org/maven2/org/nanohttpd/nanohttpd/2.3.1/nanohttpd-2.3.1.jar
+          curl --fail --retry 2 -o .build/receiver-validation/json.jar https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar
+          javac -cp '.build/receiver-validation/*' -d .build/receiver-validation/classes Gremma/AndroidStudio/app/src/main/java/com/gremma/android/ClipUploadServer.java video_stream/tests/java/ReceiverHarness.java
+      - name: Test uploader against the Pixel receiver over HTTPS
+        env:
+          GREMMA_RECEIVER_CLASSPATH: ${{ github.workspace }}/.build/receiver-validation/classes:${{ github.workspace }}/.build/receiver-validation/*
+          PYTHONPATH: ${{ github.workspace }}/video_stream/src
+        run: python -m unittest discover -s video_stream/tests -v
+      - name: Compile Android app on the hosted runner
+        working-directory: Gremma/AndroidStudio
+        shell: bash
+        run: |
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+          bash gradlew --no-daemon :app:compileDebugKotlin :app:compileDebugJavaWithJavac
