@@ -8,8 +8,12 @@ import UIKit
 final class CameraActivityState: ObservableObject {
     static let shared = CameraActivityState()
     @Published private(set) var isRunning = false
+    @Published private(set) var isMicrophoneRunning = false
 
-    fileprivate func update(isRunning: Bool) { self.isRunning = isRunning }
+    fileprivate func update(isRunning: Bool) {
+        self.isRunning = isRunning
+        isMicrophoneRunning = false
+    }
 }
 
 /// A live preview with an explicit, cancellable capture countdown.
@@ -34,12 +38,17 @@ struct AccessibleCameraView: View {
             VStack(spacing: 20) {
                 HStack {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(camera.recordVideo ? "Record a room" : "Capture an image")
+                        Text(camera.recordVideo ? "Record an activity" : "Capture an image")
                             .font(.title2.bold()).accessibilityAddTraits(.isHeader)
                         Label(camera.isCameraRunning ? "Camera on · live preview" : "Camera off",
                               systemImage: camera.isCameraRunning ? "camera.fill" : "camera")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(camera.isCameraRunning ? Color.green : .white.opacity(0.8))
+                        if camera.recordVideo && camera.isCameraRunning {
+                            Label("Video only · microphone off", systemImage: "mic.slash")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
                     }
                     Spacer()
                     Button("Cancel", action: camera.cancel)
@@ -171,7 +180,7 @@ private final class AccessibleCameraModel: NSObject, ObservableObject, AVSpeechS
                 Task { @MainActor [weak self] in
                     guard let self, !self.finished else { return }
                     if granted { self.pipeline.start() }
-                    else { self.fail("Allow camera access in Settings to take a photo or record a room.") }
+                    else { self.fail("Allow camera access in Settings to capture an activity.") }
                 }
             }
         default: fail("Camera access is unavailable. Enable Camera for Gremma in Settings.")
@@ -247,15 +256,15 @@ private final class AccessibleCameraModel: NSObject, ObservableObject, AVSpeechS
             status = readyStatus
             prepareSpeech()
             let message = recordVideo
-                ? "Camera ready. Point at the room. Tap the large Start recording button when ready. Tap it again during the countdown to cancel. Recording lasts up to twenty seconds."
+                ? "Camera ready. Point at the activity. Tap Start recording when ready. Tap again during the countdown to cancel. Recording lasts up to one minute."
                 : "Camera ready. Point at what you want to capture. Tap the large Capture image button when ready. Tap it again during the countdown to cancel."
             speech.speak(makeUtterance(message))
         case .recording:
             isRecording = true
-            status = "Recording. Slowly sweep across the room."
-            speech.speak(makeUtterance("Recording started."))
+            status = "Recording the activity. Keep the action in view."
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
             recordingTimer = Task { [weak self] in
-                for remaining in stride(from: 20, through: 1, by: -1) {
+                for remaining in stride(from: 60, through: 1, by: -1) {
                     guard !Task.isCancelled, let self, !self.finished, self.isRecording else { return }
                     self.countdown = remaining
                     do { try await Task.sleep(for: .seconds(1)) } catch { return }
@@ -295,7 +304,7 @@ private final class AccessibleCameraModel: NSObject, ObservableObject, AVSpeechS
     }
 
     private var readyStatus: String {
-        "Point at \(recordVideo ? "the room" : "the item"). Tap the large button when ready."
+        "Point at \(recordVideo ? "the activity" : "the item"). Tap the large button when ready."
     }
 
     private func clearCountdown() {
@@ -378,10 +387,7 @@ private final class AccessibleCameraModel: NSObject, ObservableObject, AVSpeechS
             try audio.setCategory(.playback, mode: .spokenAudio, options: .duckOthers)
             try audio.setActive(true)
             ownsAudioSession = true
-        } catch {
-            // The preview stays open; a stalled spoken countdown returns to readiness.
-            status += " Spoken instructions are unavailable."
-        }
+        } catch { status += " Spoken instructions are unavailable." }
     }
 
     private func fail(_ message: String) {
@@ -405,20 +411,25 @@ private final class AccessibleCameraModel: NSObject, ObservableObject, AVSpeechS
         clearCountdown()
         // Keep the capture view visible until stopRunning has returned. The controller
         // may start a spoken reply or a new listening window in the callback.
-        pipeline.stop { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.isCameraRunning = false
+        pipeline.stop { [self] in
+            Task { @MainActor [self] in
+                self.isCameraRunning = false
                 CameraActivityState.shared.update(isRunning: false)
+                self.restoreAudioSession()
                 onStopped?()
             }
         }
-        if ownsAudioSession {
+    }
+
+    private func restoreAudioSession() {
+        if previousAudio != nil {
             let audio = AVAudioSession.sharedInstance()
-            try? audio.setActive(false, options: .notifyOthersOnDeactivation)
+            if ownsAudioSession { try? audio.setActive(false, options: .notifyOthersOnDeactivation) }
             if let previousAudio {
                 try? audio.setCategory(previousAudio.0, mode: previousAudio.1, options: previousAudio.2)
             }
             ownsAudioSession = false
+            previousAudio = nil
         }
     }
 }
@@ -449,6 +460,7 @@ private final class CameraCapturePipeline: NSObject, @unchecked Sendable,
     private var completed = false
     private var movieURL: URL?
     private var exportSession: AVAssetExportSession?
+    private var exportGeneration: UUID?
     private var runningObservation: NSKeyValueObservation?
 
     init(recordVideo: Bool, event: @escaping @Sendable (CameraCaptureEvent) -> Void) {
@@ -462,6 +474,9 @@ private final class CameraCapturePipeline: NSObject, @unchecked Sendable,
 
     func start() {
         queue.async {
+            self.exportGeneration = nil
+            self.exportSession?.cancelExport()
+            self.exportSession = nil
             self.cancelled = false
             self.captureStarted = false
             self.completed = false
@@ -480,7 +495,15 @@ private final class CameraCapturePipeline: NSObject, @unchecked Sendable,
         }
         let input = try AVCaptureDeviceInput(device: device)
         session.beginConfiguration()
-        defer { session.commitConfiguration() }
+        defer {
+            if !configured {
+                session.inputs.forEach(session.removeInput)
+                session.outputs.forEach(session.removeOutput)
+            }
+            session.commitConfiguration()
+        }
+        // Playback supports the spoken countdown; the capture session has no audio input.
+        session.automaticallyConfiguresApplicationAudioSession = false
         session.sessionPreset = recordVideo ? .hd1280x720 : .photo
         guard session.canAddInput(input) else { throw CameraFailure("Gremma cannot access the back camera right now.") }
         session.addInput(input)
@@ -494,7 +517,7 @@ private final class CameraCapturePipeline: NSObject, @unchecked Sendable,
             connection.videoRotationAngle = 90
         }
         if recordVideo {
-            movieOutput.maxRecordedDuration = CMTime(seconds: 20, preferredTimescale: 600)
+            movieOutput.maxRecordedDuration = CMTime(seconds: 60, preferredTimescale: 600)
             if let connection = movieOutput.connection(with: .video), movieOutput.availableVideoCodecTypes.contains(.h264) {
                 movieOutput.setOutputSettings([AVVideoCodecKey: AVVideoCodecType.h264], for: connection)
             }
@@ -526,6 +549,7 @@ private final class CameraCapturePipeline: NSObject, @unchecked Sendable,
     func stop(completion: (@Sendable () -> Void)? = nil) {
         queue.async {
             self.cancelled = true
+            self.exportGeneration = nil
             self.exportSession?.cancelExport()
             if self.movieOutput.isRecording { self.movieOutput.stopRecording() }
             if self.session.isRunning { self.session.stopRunning() }
@@ -586,25 +610,37 @@ private final class CameraCapturePipeline: NSObject, @unchecked Sendable,
             return
         }
         exportSession = exporter
+        let generation = UUID()
+        exportGeneration = generation
+        queue.asyncAfter(deadline: .now() + 45) {
+            guard self.exportGeneration == generation, !self.cancelled, !self.completed else { return }
+            self.exportGeneration = nil
+            self.exportSession = nil
+            exporter.cancelExport()
+            self.finishWithError("Preparing this recording took too long. You can close the camera or try again.")
+        }
         Task {
             do {
                 try await exporter.export(to: destination, as: .mp4)
                 self.queue.async {
-                    self.exportSession = nil
                     try? FileManager.default.removeItem(at: source)
-                    guard !self.cancelled, !self.completed else {
+                    guard self.exportGeneration == generation, !self.cancelled, !self.completed else {
                         try? FileManager.default.removeItem(at: destination)
                         return
                     }
+                    self.exportGeneration = nil
+                    self.exportSession = nil
                     self.completed = true
                     self.event(.video(destination))
                 }
             } catch {
                 let message = error.localizedDescription
                 self.queue.async {
-                    self.exportSession = nil
                     try? FileManager.default.removeItem(at: source)
                     try? FileManager.default.removeItem(at: destination)
+                    guard self.exportGeneration == generation else { return }
+                    self.exportGeneration = nil
+                    self.exportSession = nil
                     if !self.cancelled { self.finishWithError(message) }
                 }
             }

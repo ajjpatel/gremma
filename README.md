@@ -1,32 +1,38 @@
 # Gremma
 
-Local AI for older adults and people with low vision, built around **Google Gemma 4 E4B** on iPhone.
+A voice-first memory assistant for older adults with low vision, built with **Gemma E4B on iPhone**.
 
-Gremma is a native SwiftUI prototype for a voice-led assistant that remembers where objects were seen, reads physical text aloud, and helps someone picture a place. Conversation and image understanding run through local Gemma; Apple Vision handles text recognition.
+Record or upload a video. Gremma analyzes the visible activity and lets you ask what happened or where something was last seen.
 
-## Features
+## Project components
 
-- **Record & Find:** record a room or import a video, confirm its room name, then ask where an item was last seen. Saved results include image evidence and video timestamps.
-- **Remember a photo:** save visible objects and their reported locations; search, correct, or delete observations.
-- **Read aloud:** read printed text, medicine labels, expiry markings, and US dollar denominations. The live camera waits for a tap, speaks a countdown, and supports cancellation.
-- **Imagine:** hear guided Taj Mahal descriptions and ask questions using a bundled UNESCO fact pack.
-- **Natural conversation:** speak or type freely. A local decision handler routes feature requests; general questions remain conversation.
-- **Resume interrupted work:** completed video frames are saved, and retry continues at the unfinished frame. Ambiguous positions remain explicitly uncertain.
+- [iPhone app and developer guide](Gremma/README.md)
+- [Android Studio app](Gremma/AndroidStudio/README.md)
+- [Ventuno Q camera capture and clip selection](video_stream/README.md)
 
-The current language is **English**, with **US dollars** for currency reading. Recognition and spoken replies take turns while the app is in the foreground. Typed input and accessible controls are also available.
+The feature and validation notes below describe the iPhone app. Each component's guide documents its own setup and integration status.
 
-## Get started
+## Current app
 
-You need an Apple Silicon Mac, Xcode with an iOS 18-or-later SDK, and an iPhone running iOS 18 or later. Follow the [developer guide](Gremma/README.md) to configure signing, build the app, import a model, and run tests.
+- **Activity memory:** ordered video frames distinguish supported placements, pickups, movements, sightings, and possible medicine-taking activities. Every event retains a video reference and recording time when known.
+- **Changing locations:** a later pickup invalidates an earlier location answer. Previous events remain in history; answers describe the latest evidence rather than claiming live tracking.
+- **Today and history:** browse visible activities, review evidence, and play original videos. Unknown recording dates stay outside daily logs.
+- **Medicine video logs:** optional local notifications at **9 AM and 9 PM** report a missing morning/evening video log. This never establishes whether medicine was taken or missed.
+- **Grounded model answers:** indexed records supply the evidence, and Gemma E4B generates every memory answer. The conversation screen shows throughput, time to first token, time per output token, and total answer time.
+- **Video management:** record up to 60 seconds without microphone audio, import clips up to 10 minutes, delete a video and its derived memory, or resume processing from saved activity checkpoints. Completed clips can be analyzed again; clips with no recognized activity say so explicitly.
 
-Model weights are **not included**. Import a compatible Gemma 4 E4B `.litertlm` file through model settings; E2B is a smaller alternative. Google AI Edge Gallery downloads remain in that app's private storage, so Gremma needs its own imported copy.
+The current pipeline analyzes video only. Silent recordings are valid; imported audio is not transcribed. The dedicated **Imagine** and **Read aloud camera** features have been removed from the interface. Spoken answers and voice control remain.
 
-Dependencies, model downloads, and Apple development provisioning can require internet during setup. The implemented assistant flows make no app network requests. A complete airplane-mode cold-start trial remains pending.
+## Build
 
-## Validation and limits
+See the [developer guide](Gremma/README.md) for Xcode signing, E4B import, architecture, and tests. Model weights, recordings, and diagnostics are not distributed in this repository. Existing model downloads in another app's private storage cannot be directly shared with Gremma.
 
-**134 automated checks pass:** 78 core tests, 33 controlled routing checks, 10 deadline/cancellation tests, and 13 observation/storage scenarios. Controlled model responses test application behavior, not model accuracy.
+The assistant uses local processing. Setup, model downloads, and development provisioning may need internet. Full airplane-mode operation must be tested on the target phone; on-device English speech support is required.
 
-Real iPhone trials confirmed speech recognition and replies, live camera reading, cancellable capture, and room confirmation. One failed recording recovered from frame 10 to **12/12 completed frames and 54 observations**, preserving all 40 earlier observations unchanged.
+## Prototype limits
 
-This is a hackathon prototype. Videos sample at most 12 frames and can miss objects. Visual descriptions and OCR can be wrong; locations are last-seen observations, not live tracking. Reading does not provide medicine advice or authenticate currency, and the app is not a navigation system. Broader accuracy, sustained voice use, and airplane-mode cold start still need testing with intended users.
+Activity recognition samples video and can miss brief actions. Object identity and visual interpretation can be wrong. Ambiguity must stay explicit. A medicine log is video evidence, not a dose or adherence record. Visible interactions do not establish what people said or identify them.
+
+Controlled tests exercise persistence, chronology, pickup invalidation, deletion, routing, and reminder scheduling. They do not establish real-world recognition accuracy. See the developer guide for device validation status.
+
+**Later stage:** a Ventuno Q upload prototype is saved separately from the current user flow. Manual recording and import are the current delivery priority. The board integration has not been validated on physical hardware.

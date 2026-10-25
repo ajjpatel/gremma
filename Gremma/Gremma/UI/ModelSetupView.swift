@@ -45,7 +45,7 @@ struct ModelSetupView: View {
                             else { do { try await model.loadModel() } catch { actionError = error.localizedDescription } }
                         }
                     }.disabled(model.isBusy || app.isWorking || model.selectedModelURL == nil)
-                    Text("E2B uses less memory. Start there if E4B cannot load or the app closes during inference.")
+                    Text("Gremma uses E4B for activity understanding and grounded answers. Simple saved-fact questions use local records directly.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Embedding model · available for later retrieval") {

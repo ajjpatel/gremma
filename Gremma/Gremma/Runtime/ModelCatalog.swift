@@ -95,7 +95,9 @@ enum ModelCatalog {
             throw LocalModelError.invalidFile("This model requires LiteRT-LM \(minimum). Gremma currently includes 0.18.1.")
         }
         let budgets = (info.visionSignatureSelection() ?? []).filter { $0 > 0 }.sorted()
-        let selectedBudget = budgets.last(where: { $0 <= 256 }) ?? budgets.first
+        // The downloaded E4B advertises 70, 140, and 280 visual tokens per image.
+        // Use its highest supported detail budget; a 256 cap selected only 140.
+        let selectedBudget = budgets.last
         return LocalModelRecord(url: url, kind: kind, byteCount: Int64(bytes),
             supportsVision: info.inputModalities.vision,
             maximumContextTokens: info.maxContextTokens(), dynamicContext: info.isDynamicContext(),

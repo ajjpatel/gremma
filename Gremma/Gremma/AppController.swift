@@ -21,6 +21,26 @@ enum GremmaError: LocalizedError {
 final class AppController: ObservableObject {
     let model = LocalModelService()
     let voice = VoiceService()
+    let reminders = MedicineLogReminders()
+    private var reminderRefreshTask: Task<Void, Never>?
+    private var activityRepository: ActivityRepository?
+    @Published var activities: [ActivityEvent] = []
+    @Published var transcripts: [ActivityTranscript] = []
+    @Published var showActivityTimeline = false
+    @Published var showReminders = false
+    @Published var showHomeDevices = false
+    @Published var lastLookupSeconds: Double?
+    @Published var queryPerformance: QueryPerformance?
+    @Published var focusedCollection = FocusedVideoCollection.load()
+    private var queryStartedUptime: Double?
+    private var answerInference: InferenceMetrics?
+    var focusedVideoJobs: [VideoIndexJob] {
+        guard let focus = focusedCollection else { return videoJobs }
+        return videoJobs.filter { focus.videoIDs.contains($0.id) || $0.createdAt > focus.createdAt }
+    }
+    func videoTitle(_ job: VideoIndexJob) -> String { focusedCollection?.title(for: job.id) ?? job.room }
+    @Published var morningMedicineLog = "No medicine-taking video has been logged this morning."
+    @Published var eveningMedicineLog = "No medicine-taking video has been logged this evening."
     @Published var mode: AppMode = .remember
     @Published var roomName = "Living room"
     @Published var query = ""
@@ -47,7 +67,7 @@ final class AppController: ObservableObject {
     @Published private(set) var retryVideoID: String?
     private var videoRetryContextActive = false
     var retryVideoJob: VideoIndexJob? {
-        videoJobs.first { $0.id == retryVideoID && $0.isRoomConfirmed && !$0.isComplete }
+        videoJobs.first { $0.id == retryVideoID && $0.isRoomConfirmed && !$0.isMemoryComplete }
     }
     private var conversation = ConversationHistory()
     private var pendingConversationUser: String?
@@ -77,6 +97,8 @@ final class AppController: ObservableObject {
         } catch { self.error = error.localizedDescription }
         do { videoQueue = try VideoIndexQueue() }
         catch { self.error = [self.error, error.localizedDescription].compactMap { $0 }.joined(separator: "\n") }
+        do { activityRepository = try ActivityRepository() }
+        catch { self.error = error.localizedDescription }
         voice.onCommand = { [weak self] command in self?.handleCommand(command) }
         voice.onSpeechFinished = { [weak self] in self?.resumeVoiceSession() }
         voice.onListeningEnded = { [weak self] outcome in self?.listeningEnded(outcome) }
@@ -87,10 +109,18 @@ final class AppController: ObservableObject {
     }
 
     func refreshMemory() async {
+        if let activityRepository {
+            do {
+                activities = try await activityRepository.events()
+                transcripts = try await activityRepository.transcripts()
+                morningMedicineLog = try await activityRepository.medicineLogStatus(for: .morning).message
+                eveningMedicineLog = try await activityRepository.medicineLogStatus(for: .evening).message
+            } catch { self.error = error.localizedDescription }
+        }
         if let repository { observations = await repository.all() }
         if let videoQueue {
             videoJobs = await videoQueue.jobs()
-            hasPendingVideo = videoJobs.contains { !$0.isComplete }
+            hasPendingVideo = videoJobs.contains { !$0.isMemoryComplete }
             hasVideoCaptures = !videoJobs.isEmpty
             let unconfirmed = videoJobs.filter { !$0.isRoomConfirmed }
             // Only retain the explicitly selected video. Do not silently transfer
@@ -99,8 +129,8 @@ final class AppController: ObservableObject {
             if awaiting == nil { videoRoomQuestionActive = false }
             pendingVideoID = awaiting?.id
             pendingVideoRoom = awaiting?.proposedRoom
-            if !videoJobs.contains(where: { $0.id == retryVideoID && !$0.isComplete }) {
-                retryVideoID = videoJobs.first { $0.isRoomConfirmed && !$0.isComplete }?.id
+            if !videoJobs.contains(where: { $0.id == retryVideoID && !$0.isMemoryComplete }) {
+                retryVideoID = videoJobs.first { $0.isRoomConfirmed && !$0.isMemoryComplete }?.id
             }
         }
         if !started {
@@ -108,7 +138,28 @@ final class AppController: ObservableObject {
             videoRetryContextActive = retryVideoJob != nil
             await model.refreshModels()
             let arguments = ProcessInfo.processInfo.arguments
-            if arguments.contains("--gremma-diagnostics") || arguments.contains("--gremma-observation-diagnostics") || arguments.contains("--gremma-coordinator-diagnostics") || arguments.contains("--gremma-json-probe") {
+            #if targetEnvironment(simulator)
+            if arguments.contains("--gremma-preview-saved-answer") {
+                let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                if let data = try? Data(contentsOf: directory.appendingPathComponent("PreviewAnswer.json")),
+                   let row = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    lastUserMessage = row["question"] as? String ?? ""
+                    answer = row["answer"] as? String ?? ""
+                    if let value = row["performance"], let encoded = try? JSONSerialization.data(withJSONObject: value) {
+                        queryPerformance = try? JSONDecoder().decode(QueryPerformance.self, from: encoded)
+                    }
+                }
+                return
+            }
+            #endif
+            // Explicit connected-device test sessions span several jobs. Keep
+            // them awake until a normal launch restores ordinary idle behavior.
+            let developerSessionFlags = ["--gremma-import-demos", "--gremma-inspect-video",
+                "--gremma-reanalyze-video", "--gremma-resume-video", "--gremma-verify-demo-recall", "--gremma-verify-natural-recall", "--gremma-verify-model-recall", "--gremma-confirm-activity"]
+            if developerSessionFlags.contains(where: arguments.contains) {
+                UIApplication.shared.isIdleTimerDisabled = true
+            }
+            if arguments.contains("--gremma-activity-diagnostics") || arguments.contains("--gremma-diagnostics") || arguments.contains("--gremma-observation-diagnostics") || arguments.contains("--gremma-coordinator-diagnostics") || arguments.contains("--gremma-json-probe") {
                 if let index = arguments.firstIndex(of: "--gremma-model"), index + 1 < arguments.count,
                    let url = model.modelURLs.first(where: { $0.lastPathComponent == arguments[index + 1] }) {
                     model.selectModel(url)
@@ -117,7 +168,9 @@ final class AppController: ObservableObject {
                 isWorking = true
                 status = "Running explicit device diagnostics with synthetic test images…"
                 let report: [String: Any]
-                if let probeIndex = arguments.firstIndex(of: "--gremma-json-probe") {
+                if arguments.contains("--gremma-activity-diagnostics") {
+                    report = await ActivityDeviceDiagnostics.run(model: model)
+                } else if let probeIndex = arguments.firstIndex(of: "--gremma-json-probe") {
                     report = await StructuredGenerationDiagnostics.run(model: model,
                         mode: probeIndex + 1 < arguments.count ? arguments[probeIndex + 1] : "native")
                 } else if arguments.contains("--gremma-observation-diagnostics") {
@@ -128,6 +181,29 @@ final class AppController: ObservableObject {
                 isWorking = false
                 status = "Device diagnostics finished. Report saved under Documents/Diagnostics."
                 answer = "Diagnostic run finished: \(report["status"] ?? "see report"). This run used synthetic test images; it does not validate real-world camera accuracy."
+            } else if arguments.contains("--gremma-confirm-activity") {
+                importConfirmedActivity()
+            } else if arguments.contains("--gremma-verify-demo-recall") || arguments.contains("--gremma-verify-natural-recall") || arguments.contains("--gremma-verify-model-recall") {
+                Task { await SavedRecallDiagnostics.run(app: self) }
+            } else if arguments.contains("--gremma-import-demos") {
+                importDemoVideos()
+            } else if let index = arguments.firstIndex(of: "--gremma-inspect-video"), index + 1 < arguments.count,
+                      let queue = videoQueue, let job = await queue.job(id: arguments[index + 1]) {
+                run {
+                    self.status = "Inspecting the saved video locally…"
+                    let result: String
+                    if arguments.contains("--gremma-held-object-probe") {
+                        result = await VideoHeldObjectDiagnostics.run(job: job, queue: queue, model: self.model)
+                    } else {
+                        result = await SavedVideoDiagnostics.run(job: job, queue: queue, model: self.model,
+                            firstWindowOnly: arguments.contains("--gremma-inspect-first-window"))
+                    }
+                    self.status = "Saved video inspection finished."
+                    self.answer = result
+                }
+            } else if let index = arguments.firstIndex(of: "--gremma-reanalyze-video"), index + 1 < arguments.count,
+                      let queue = videoQueue, let job = await queue.job(id: arguments[index + 1]) {
+                reanalyzeVideo(job)
             } else if let index = arguments.firstIndex(of: "--gremma-resume-video"), index + 1 < arguments.count {
                 resumeVideo(id: arguments[index + 1])
             } else if SFSpeechRecognizer.authorizationStatus() == .authorized,
@@ -234,8 +310,11 @@ final class AppController: ObservableObject {
         run {
             defer { if ownsTemporaryFile { try? FileManager.default.removeItem(at: url) } }
             guard let queue = self.videoQueue else { throw GremmaError.message("Video storage is unavailable.") }
-            self.status = "Saving the room video on this iPhone…"
-            let job = try await queue.importVideo(from: url, room: "Unconfirmed room", roomConfirmed: false)
+            self.status = "Saving the activity video on this iPhone…"
+            let duration = ownsTemporaryFile ? try await AVURLAsset(url: url).load(.duration).seconds : 0
+            let recordedAt = ownsTemporaryFile ? Date().addingTimeInterval(-duration) : nil
+            let job = try await queue.importVideo(from: url, room: "Unconfirmed room", roomConfirmed: false,
+                recordedAt: recordedAt, recordingDateSource: ownsTemporaryFile ? .appRecording : nil)
             self.pendingVideoID = job.id
             await self.refreshMemory()
             try Task.checkCancellation()
@@ -249,14 +328,14 @@ final class AppController: ObservableObject {
             guard let queue = self.videoQueue else { throw GremmaError.message("Video storage is unavailable.") }
             let job: VideoIndexJob?
             if let selectedID { job = await queue.job(id: selectedID) }
-            else { job = await queue.pendingJobs().first }
+            else { job = await queue.pendingMemoryJobs().first }
             guard let job else {
                 throw GremmaError.message("There is no pending room video.")
             }
             try Task.checkCancellation()
             if job.isRoomConfirmed {
-                guard !job.isComplete else { self.present("This video is already fully indexed."); return }
-                self.voice.speak("Resuming at frame \(job.nextFrameIndex + 1) of \(job.sampleTimes.count). Your \(job.nextFrameIndex) completed frames are saved.")
+                guard !job.isMemoryComplete else { self.present("This video is already fully indexed."); return }
+                self.voice.speak("Resuming this video. Saved activities are kept.")
                 try await self.processVideo(job)
             }
             else {
@@ -266,6 +345,94 @@ final class AppController: ObservableObject {
                 if job.proposedRoom == nil { try await self.proposeVideoRoom(job) }
                 else { self.askForVideoRoom() }
             }
+        }
+    }
+
+    func reanalyzeVideo(_ job: VideoIndexJob) {
+        run {
+            guard let queue = self.videoQueue else { throw GremmaError.message("Video storage is unavailable.") }
+            let restarted = try await queue.restartActivityAnalysis(id: job.id)
+            await self.refreshMemory()
+            self.voice.speak("Analyzing your saved video again.")
+            try await self.processVideo(restarted)
+        }
+    }
+
+    private func importDemoVideos() {
+        run {
+            guard let queue = self.videoQueue else { throw GremmaError.message("Video storage is unavailable.") }
+            let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("DemoImports", isDirectory: true)
+            let manifest = try DemoVideoManifest.load(from: directory)
+            var imported: [VideoIndexJob] = []
+            // Save every original before starting expensive model work. A failed
+            // clip must not prevent later clips from reaching the library.
+            for (index, clip) in manifest.clips.enumerated() {
+                try Task.checkCancellation()
+                self.status = "Saving demo clip \(index + 1) of \(manifest.clips.count)…"
+                let source = directory.appendingPathComponent(clip.filename)
+                let key = try DemoVideoManifest.contentKey(for: source)
+                let saved = await queue.jobs().filter(\.isDemoVideo)
+                var existing = saved.first { $0.demoImportKey == key }
+                // Recognize clips imported before content identities existed.
+                // A numbered label alone is not evidence of equal video bytes.
+                if existing == nil {
+                    for old in saved where old.demoImportKey == nil {
+                        if let url = await queue.sourceURL(for: old),
+                           try DemoVideoManifest.contentKey(for: url) == key {
+                            existing = old
+                            break
+                        }
+                    }
+                }
+                let job: VideoIndexJob
+                if let existing { job = existing }
+                else {
+                    // Keep evaluation activity labels out of the visual prompt.
+                    let number = (saved.compactMap { ActivityEvidenceScope.clipNumber($0.room) }.max() ?? 0) + 1
+                    job = try await queue.importVideo(from: source, room: "Demo clip \(number)",
+                        roomConfirmed: true, isDemo: true, demoImportKey: key)
+                }
+                imported.append(job)
+                await self.refreshMemory()
+            }
+            for job in imported where !job.isMemoryComplete {
+                do { try await self.processVideo(job) }
+                catch is CancellationError { throw CancellationError() }
+                catch {
+                    if self.model.requiresRestart { break }
+                }
+            }
+            await self.refreshMemory()
+            let ids = Set(imported.map(\.id))
+            let saved = self.videoJobs.filter { ids.contains($0.id) }
+            let completed = saved.filter(\.isMemoryComplete).count
+            let clear = Set(self.activities.filter { ids.contains($0.videoID) && $0.hasClearEvidence }.map(\.videoID)).count
+            let pending = saved.count - completed
+            self.status = "\(completed) of \(saved.count) demo clips analyzed locally"
+            let recovery = pending > 0 ? " \(pending) clips still need processing; their originals and saved progress are kept.\(self.model.requiresRestart ? " Reopen Gremma to resume." : " Open Videos to resume them.")" : ""
+            self.present("Saved \(saved.count) demo videos. \(completed) are analyzed; \(clear) contain classified observations.\(recovery) Demo footage is excluded from your daily logs. Ask what happened in demo clip one.")
+        }
+    }
+
+    private func importConfirmedActivity() {
+        run {
+            guard let queue = self.videoQueue, let store = self.activityRepository else {
+                throw GremmaError.message("Activity storage is unavailable.")
+            }
+            let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("ConfirmedActivity.json")
+            let data = try Data(contentsOf: url)
+            guard data.count < 65_536 else { throw GremmaError.message("The confirmation file is too large.") }
+            let confirmation = try JSONDecoder().decode(ConfirmedVideoActivity.self, from: data)
+            guard let job = await queue.job(id: confirmation.videoID) else {
+                throw GremmaError.message("The video for this confirmed label is no longer saved.")
+            }
+            let event = try confirmation.event(for: job)
+            try await store.replaceSegment(videoID: job.id, segmentID: event.segmentID, events: [event])
+            await self.refreshMemory()
+            self.status = "User-confirmed activity label saved"
+            self.present("Saved your confirmed label for \(event.entity). The label is marked as confirmed by you and linked to the original video.")
         }
     }
 
@@ -328,7 +495,7 @@ final class AppController: ObservableObject {
             self.roomName = room
             await self.refreshMemory()
             try Task.checkCancellation()
-            self.voice.speak("Confirmed: \(room). I'll now remember the objects in this video.")
+            self.voice.speak("Confirmed: \(room). I'll now analyze the activities in this video.")
             try await self.processVideo(confirmed)
         }
     }
@@ -357,11 +524,13 @@ final class AppController: ObservableObject {
 
     func deleteVideo(_ job: VideoIndexJob) async throws {
         guard !isWorking else { throw GremmaError.message("Stop the current task before deleting a video.") }
-        guard let repository, let videoQueue else { throw GremmaError.message("Video storage is unavailable.") }
+        guard let repository, let videoQueue, let activityRepository else { throw GremmaError.message("Video or activity storage is unavailable. Existing sources have been kept.") }
         isWorking = true
         voice.cancelListening(); voice.stopSpeaking()
         defer { isWorking = false }
         do {
+            clearSessionMemory()
+            try await activityRepository.deleteVideo(id: job.id)
             try await repository.deleteVideoObservations(videoID: job.id)
             try await videoQueue.removeJob(id: job.id)
         } catch {
@@ -371,75 +540,146 @@ final class AppController: ObservableObject {
         }
         await refreshMemory()
         evidenceImage = nil; evidenceCaption = ""
-        present("Deleted this video and its saved object observations.")
+        await reminders.reconcile(events: activities)
+        present("Deleted this video and its saved activities.")
     }
 
     private func processVideo(_ original: VideoIndexJob) async throws {
-        guard let queue = videoQueue else { throw GremmaError.message("Video storage is unavailable.") }
-        guard original.isRoomConfirmed else { throw GremmaError.message("Confirm the room before remembering objects from this video.") }
+        guard let queue = videoQueue, let store = activityRepository else { throw GremmaError.message("Activity storage is unavailable.") }
+        guard original.isRoomConfirmed else { throw GremmaError.message("Confirm this video's room first.") }
         retryVideoID = original.id
         videoRetryContextActive = true
         canRetryCapture = false
         defer { videoProgress = nil }
-        var job = original
-        var added = 0
-        VideoRecoveryDiagnostics.record(job: job, observations: observations, stage: "started")
-        while !job.isComplete {
-            let index = job.nextFrameIndex
+        var job = try await queue.beginActivityAnalysis(id: original.id)
+        while !job.isMemoryComplete {
+            let index = job.nextActivityWindowIndex
             do {
                 try Task.checkCancellation()
-                status = "Frame \(index + 1) of \(job.sampleTimes.count) · \(index) frames saved. Stop keeps your progress."
-                videoProgress = job.progress
-                let frameJob = job
-                let frame = try await BoundedAsync.run(maximumDuration: 30) {
-                    try await queue.frame(for: frameJob, index: index)
-                }
-                try Task.checkCancellation()
-                evidenceImage = UIImage(data: frame.jpegData)
-                evidenceCaption = "Video evidence · \(frame.actualTimeSeconds.formatted(.number.precision(.fractionLength(1)))) seconds"
-                var frameCount = 0
-                for attempt in 1...2 {
-                    do {
-                        frameCount = try await remember(frame.jpegData, room: job.room, capturedAt: job.createdAt,
-                            videoID: job.id, timestamp: frame.actualTimeSeconds, frameKey: "\(job.id)-\(index)")
-                        break
-                    } catch let inferenceError as ObservationInferenceError where attempt == 1 {
-                        try Task.checkCancellation()
-                        VideoRecoveryDiagnostics.record(job: job, observations: observations,
-                            stage: "retrying_frame", detail: inferenceError.reason)
-                        status = "Checking frame \(index + 1) again · \(index) completed frames are safe."
+                videoProgress = job.memoryProgress
+                do {
+                    status = "Understanding activity \(index + 1) of \(job.activityWindowCount) · Gemma E4B"
+                    var events: [ActivityEvent] = []
+                    for attempt in 1...2 {
+                        do {
+                            events = try await ActivityVideoIndexer.extract(job: job, windowIndex: index, queue: queue, model: model)
+                            break
+                        } catch is ActivityVideoIndexError where attempt == 1 {
+                            try Task.checkCancellation()
+                            status = "Checking this activity segment again · earlier segments are saved"
+                        }
                     }
+                    try Task.checkCancellation()
+                    if job.isDemoVideo {
+                        for i in events.indices {
+                            events[i].isDemo = true
+                            let label = "Demo footage (\(job.room)): "
+                            let original = events[i].summary
+                            if original.count + label.count <= 3000 { events[i].summary = label + original }
+                            else {
+                                var kept = ""
+                                original.enumerateSubstrings(in: original.startIndex..<original.endIndex, options: .bySentences) { sentence, _, _, stop in
+                                    guard let sentence, kept.count + sentence.count + label.count < 2900 else { stop = true; return }
+                                    kept += sentence + " "
+                                }
+                                events[i].summary = label + kept + "[Additional description omitted.]"
+                            }
+                            events[i].occurredAt = nil
+                        }
+                    }
+                    try await store.replaceSegment(videoID: job.id, segmentID: job.activitySegmentID(at: index), events: events)
+                    try Task.checkCancellation()
+                    job = try await queue.markActivityWindowComplete(id: job.id, expectedIndex: index)
                 }
-                try Task.checkCancellation()
-                job = try await queue.markFrameComplete(id: job.id, expectedIndex: index, actualTimeSeconds: frame.actualTimeSeconds)
-                added += frameCount
                 await refreshMemory()
-                VideoRecoveryDiagnostics.record(job: job, observations: observations, stage: "frame_saved")
+                refreshRemindersInBackground()
             } catch {
                 let cancelled = Task.isCancelled || error is CancellationError
-                let reason = cancelled ? "Stopped by you. Resume continues with this frame."
-                    : (error as? ObservationInferenceError)?.reason ?? error.localizedDescription
-                do { job = try await queue.markFailed(id: job.id, expectedIndex: index, message: reason) }
-                catch { /* The last successful checkpoint is still authoritative. */ }
+                let reason = cancelled ? "Stopped by you. Resume continues from this segment." : error.localizedDescription
+                _ = try? await queue.markMemoryFailed(id: job.id, stage: .activity,
+                    expectedIndex: index, message: reason)
                 await refreshMemory()
-                VideoRecoveryDiagnostics.record(job: job, observations: observations,
-                    stage: cancelled ? "paused" : "failed", detail: reason)
                 if cancelled { throw CancellationError() }
-                let recovery = model.requiresRestart
-                    ? "Close and reopen Gremma, then choose Resume saved video."
-                    : "Tap Resume saved video, or say try again."
-                throw GremmaError.message("Paused at frame \(index + 1) of \(job.sampleTimes.count). \(job.nextFrameIndex) completed frames are saved. \(reason) \(recovery) No new recording is needed.")
+                let recovery = model.requiresRestart ? "Close and reopen Gremma, then resume this video." : "Tap Resume saved video or say try again."
+                throw GremmaError.message("Paused during activity segment \(index + 1). Earlier progress is saved. \(reason) \(recovery)")
             }
         }
         videoRetryContextActive = false
         retryVideoID = nil
         await refreshMemory()
-        VideoRecoveryDiagnostics.record(job: job, observations: observations, stage: "completed")
-        try Task.checkCancellation()
-        status = "Indexed \(job.sampleTimes.count) sampled frames. Objects between samples may be missed."
-        let uncertain = observations.contains { $0.videoID == job.id && $0.notes?.contains("Uncertain match:") == true }
-        let uncertaintyNotice = uncertain ? " Some similar objects have multiple possible positions. I'll tell you when a match is uncertain." : ""
-        present("\(job.room) video indexed. Saved \(added) observations in this pass.\(uncertaintyNotice) Ask where an item was last seen.")
+        let videoEvents = activities.filter { $0.videoID == job.id }
+        let count = videoEvents.filter { !$0.isVisualNote }.count
+        let hasNotes = videoEvents.contains { $0.isVisualNote }
+        status = "Video analyzed locally · activity memory is ready"
+        let dateNotice = job.recordedAt == nil ? " Its recording date is unknown, so it is excluded from daily logs." : ""
+        let summary = count > 0 ? "Saved \(count) activity observations. Ask what happened or where an item was last seen." : (hasNotes ? "Your video and a visual note are saved. I couldn't reliably organize its activity details. You can review the note or analyze this video again." : "Your video is saved, but I couldn't identify a clear activity or object in it. You can review the original video.")
+        present(summary + dateNotice)
+    }
+
+    private func refreshRemindersInBackground() {
+        reminderRefreshTask?.cancel()
+        let snapshot = activities
+        reminderRefreshTask = Task { await reminders.reconcile(events: snapshot) }
+    }
+
+    func savedVideoURL(_ job: VideoIndexJob) async -> URL? {
+        await videoQueue?.sourceURL(for: job)
+    }
+
+    func setVideoDate(_ job: VideoIndexJob, date: Date) async throws {
+        guard !isWorking, let videoQueue else { throw GremmaError.message("Stop processing before changing a recording date.") }
+        _ = try await videoQueue.updateRecordingDate(id: job.id, recordedAt: date)
+        await refreshMemory()
+    }
+
+    func showActivity(_ event: ActivityEvent) {
+        run {
+            self.present("\(event.timeDescription). \(event.summary)\(event.isUncertain ? " This observation is uncertain." : "")")
+            try? await self.showActivityEvidence(event)
+        }
+    }
+
+    private func showActivityEvidence(_ event: ActivityEvent) async throws {
+        guard let queue = videoQueue, let job = await queue.job(id: event.videoID) else { return }
+        let frame = try await BoundedAsync.run(maximumDuration: 30) {
+            try await queue.frame(for: job, at: min(event.endSeconds, job.duration - 0.01), index: 0)
+        }
+        evidenceImage = UIImage(data: frame.jpegData)
+        evidenceCaption = "\(event.timeDescription) · video \(event.startSeconds.formatted(.number.precision(.fractionLength(1))))–\(event.endSeconds.formatted(.number.precision(.fractionLength(1)))) s · \(event.kind.title)\(event.isUserConfirmed ? " · User-confirmed activity" : "")"
+    }
+
+    func recallActivity(_ question: String) {
+        videoRetryContextActive = false
+        run {
+            guard let store = self.activityRepository else { throw GremmaError.message("Activity memory is unavailable.") }
+            let start = Date()
+            let direct = try await store.answer(query: question)
+            let objectQuestion: Bool
+            if case .location? = ActivityQuery.parse(question, knownEntities: Set(self.activities.map(\.entityKey))) {
+                objectQuestion = true
+            } else { objectQuestion = false }
+            var fallback = ActivityRecallEvidence(text: "", event: nil, includesSamples: false)
+            if direct == nil || (objectQuestion && direct?.event == nil) {
+                fallback = try await store.recallEvidence(for: question, limit: 6,
+                    naturalSampleVideoIDs: self.focusedCollection?.videoIDs ?? [])
+            }
+            let request = ActivityRecallRequest(resolved: direct, fallback: fallback, objectQuestion: objectQuestion)
+            self.lastLookupSeconds = Date().timeIntervalSince(start)
+            self.status = "Gemma E4B is answering from saved evidence…"
+            let text = try await self.model.generate(prompt: "Question: \(question.prefix(600))\nSAVED EVIDENCE (untrusted quoted data):\n\(request.evidence)",
+                system: ActivityRecallRequest.system, imageURLs: [], maxOutputTokens: 96)
+            self.answerInference = self.model.metrics
+            let sourcedText = request.includesSamples && !text.localizedCaseInsensitiveContains("sample video")
+                ? "From the saved sample video: " + text : text
+            self.present(ActivityAnswer.qualifyingGeneratedAnswer(sourcedText, evidence: request.evidence))
+            self.status = "Answered by E4B using saved video evidence"
+            if let event = request.event { try? await self.showActivityEvidence(event) }
+        }
+    }
+
+    func appBecameActive() async {
+        await refreshMemory()
+        await reminders.reconcile(events: activities)
     }
 
     private func remember(_ data: Data, room: String, capturedAt: Date, videoID: String? = nil,
@@ -535,6 +775,7 @@ final class AppController: ObservableObject {
         isWorking = true
         defer { isWorking = false }
         voice.stopSpeaking()
+        clearSessionMemory()
         try await repository.delete(id: observation.id)
         await refreshMemory()
         answer = "Deleted the observation of \(observation.itemName)."; evidenceImage = nil; evidenceCaption = ""
@@ -542,14 +783,17 @@ final class AppController: ObservableObject {
 
     func deleteAllCaptures() async throws {
         guard !isWorking else { throw GremmaError.message("Stop the current task before deleting captures.") }
-        guard let repository, let videoQueue else { throw GremmaError.message("One of the capture stores could not be opened. Deletion is incomplete; existing files have been preserved.") }
+        guard let repository, let videoQueue, let activityRepository else { throw GremmaError.message("One of the capture stores could not be opened. Deletion is incomplete; existing files have been preserved.") }
         isWorking = true
         defer { isWorking = false }
         voice.stopSpeaking()
+        clearSessionMemory()
+        try await activityRepository.deleteAll()
         try await repository.deleteAll()
         try await videoQueue.deleteAll()
         await refreshMemory()
-        evidenceImage = nil; evidenceCaption = ""; answer = "All saved observations and room videos have been deleted."
+        await reminders.reconcile(events: activities)
+        evidenceImage = nil; evidenceCaption = ""; answer = "All saved activities, transcripts, observations, and videos have been deleted."
     }
 
     private func showEvidence(_ observation: MemoryObservation) async {
@@ -631,13 +875,15 @@ final class AppController: ObservableObject {
         case .repeat: voice.repeatLast(); return
         default: break
         }
-        lastUserMessage = clean
         if isWorking {
             queuedMessage = clean
             status = "I'll respond to your next question when this task finishes."
             return
         }
+        lastUserMessage = clean
         pendingConversationUser = clean
+        queryStartedUptime = ProcessInfo.processInfo.systemUptime
+        queryPerformance = nil; answerInference = nil; lastLookupSeconds = nil
         let context = AssistantContext(room: roomName, mode: mode.rawValue, hasPhoto: retainedCapture != nil,
                                        savedItemNames: observations.map(\.itemName), lastTaskResult: lastTaskResult,
                                        pendingRoomProposal: pendingVideoRoom,
@@ -645,8 +891,25 @@ final class AppController: ObservableObject {
                                        hasPendingVideo: hasPendingVideo,
                                        lastVideoNeedsRetry: videoRetryContextActive && retryVideoJob != nil && !videoRoomQuestionActive)
         // Recovery must not wait for the same model that may have failed.
-        if let immediate = AgentCoordinator.immediateVideoRetryDecision(message: clean, context: context) {
+        if let immediate = AgentCoordinator.immediateRoomDecision(message: clean, context: context)
+            ?? AgentCoordinator.immediateVideoRetryDecision(message: clean, context: context) {
             dispatch(immediate, originalMessage: clean)
+            return
+        }
+        if !context.hasPendingRoomConfirmation, let request = ActivityFastRouter.route(clean) {
+            switch request {
+            case .record: openVideo(record: true)
+            case .upload: openVideo(record: false)
+            case .videos: openSavedVideos()
+            case .timeline: recallActivity("What did I do today?")
+            case .medicine: recallActivity(clean)
+            case .recall(let question): recallActivity(question)
+            case .reminders:
+                voice.cancelListening(); voiceSessionEnabled = false
+                recordAssistantTurn("Opened your medicine video-log reminders."); showReminders = true
+            case .devices: present("Home-device uploads are planned for a later stage. For now, record a video or import one from Photos.")
+            case .help: present("Hello. I can remember visible activities from videos, find where you last put something, and check your morning and evening medicine video logs. You can say record a video, where are my keys, or what happened today.")
+            }
             return
         }
         // The context above describes the previous task. Once a new request starts,
@@ -665,14 +928,25 @@ final class AppController: ObservableObject {
     private func dispatch(_ decision: AssistantDecision, originalMessage: String) {
         switch decision.action {
         case .chat:
+            answerInference = model.metrics
             status = "Here with you."
             // Preserve the explicit room question when code asks for a missing or
             // unsupported room name; unrelated conversational replies end it.
             let continuingRoomQuestion = videoRoomQuestionActive && decision.reply == AgentCoordinator.roomNamePrompt
             present(decision.reply, roomQuestion: continuingRoomQuestion)
-        case .read:
-            mode = .read; readingMode = decision.readingMode
-            openCapture(purpose: .read)
+        case .read, .imagine:
+            present("Gremma now focuses on visual activity memory. You can record a video, ask about your day, or check medicine video logs.")
+        case .recall:
+            recallActivity(decision.argument.isEmpty ? originalMessage : decision.argument)
+        case .timeline:
+            recallActivity(decision.argument.isEmpty ? "What did I do today?" : decision.argument)
+        case .medicineLog:
+            recallActivity("Medicine video log: " + originalMessage)
+        case .reminders:
+            voice.cancelListening(); voiceSessionEnabled = false
+            recordAssistantTurn("Opened your medicine video-log reminders."); showReminders = true
+        case .homeDevices:
+            present("Home-device uploads are planned for a later stage. You can record or upload a video now.")
         case .remember:
             mode = .remember; openCapture(purpose: .remember)
         case .recordVideo:
@@ -693,9 +967,7 @@ final class AppController: ObservableObject {
             guard !decision.argument.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 present("What item would you like me to find?"); return
             }
-            mode = .remember; query = decision.argument; findMemory()
-        case .imagine:
-            mode = .imagine; imagine(question: decision.argument.isEmpty ? originalMessage : decision.argument)
+            mode = .remember; recallActivity(originalMessage)
         case .describe:
             openCapture(purpose: .describe, question: originalMessage)
         case .describeLast:
@@ -719,7 +991,7 @@ final class AppController: ObservableObject {
             UIApplication.shared.isIdleTimerDisabled = true
             var succeeded = false
             do { try await operation(); try Task.checkCancellation(); succeeded = true }
-            catch is CancellationError { self.status = "Stopped. Saved video progress can be resumed." }
+            catch is CancellationError { self.status = self.videoProgress == nil ? "Stopped." : "Video processing paused. Progress is saved." }
             catch { self.fail(error.localizedDescription) }
             self.isWorking = false; self.work = nil
             UIApplication.shared.isIdleTimerDisabled = previousIdleTimerSetting
@@ -733,9 +1005,26 @@ final class AppController: ObservableObject {
         }
     }
 
+    private func clearSessionMemory() {
+        conversation.clear()
+        pendingConversationUser = nil
+        queuedMessage = nil
+        lastTaskResult = ""
+        lastUserMessage = ""
+        queryPerformance = nil; queryStartedUptime = nil; answerInference = nil
+        answer = ""
+        evidenceImage = nil
+        evidenceCaption = ""
+        voice.clearSpokenHistory()
+    }
+
     private func present(_ text: String, roomQuestion: Bool = false) {
         videoRoomQuestionActive = roomQuestion && pendingVideoID != nil
         answer = text
+        if let start = queryStartedUptime {
+            queryPerformance = QueryPerformance(start: start, end: ProcessInfo.processInfo.systemUptime, inference: answerInference)
+            queryStartedUptime = nil; answerInference = nil
+        }
         recordAssistantTurn(text)
         voice.speak(text)
     }
