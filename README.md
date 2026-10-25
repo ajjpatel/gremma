@@ -1,6 +1,6 @@
 # Gremma
 
-A voice-first memory assistant for older adults with low vision, built with **Gemma E4B on iPhone**.
+An ambient voice-first AI assistant for older adults with low vision, built with **Gemma E4B on Pixel 11 Pro (and additional support for iOS)**.
 
 Record or upload a video. Gremma analyzes the visible activity and lets you ask what happened or where something was last seen.
 
