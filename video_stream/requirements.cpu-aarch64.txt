@@ -1,0 +1,8 @@
+# Linux ARM64 CPU reference stack; see docs/board-validation.md for measurements.
+# The +cpu pins prevent the default ARM64 CUDA build from being selected.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+torchvision==0.29.1+cpu
+av==19.0.2
+sentence-transformers[image]==6.2.0
+transformers==5.20.2
