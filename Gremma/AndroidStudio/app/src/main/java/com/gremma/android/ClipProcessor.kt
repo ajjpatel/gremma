@@ -19,8 +19,14 @@ class ClipProcessor(
     private val gemma: GemmaService,
     private val embedder: Embedder,
     private val people: PersonDetector,
+    private val pose: PoseDetector,
 ) {
     private val detector = ChangeDetector()
+
+    companion object {
+        /** ~2.5 s each on the Pixel; caps background time per clip. */
+        private const val MAX_HAND_CALLS = 14
+    }
 
     data class Outcome(val events: List<MemoryRecord>, val note: String, val hazards: List<MemoryRecord> = emptyList())
 
@@ -86,6 +92,10 @@ class ClipProcessor(
                 source = "board", beforeImage = img, afterImage = img)
         }
 
+        for (h in watchHands(frames, clip.nameWithoutExtension, time, room) { id++ }) {
+            if (events.none { sameThing(it.name, h.name) }) events += h
+        }
+
         val indexed = events.map { it.copy(embedding = embedder.embed(it.sentence(), isQuery = false)) }
         store.addAll(indexed)
         store.addActivity(Activity(time, maxPeople, room))
@@ -95,6 +105,65 @@ class ClipProcessor(
     }
 
     data class Naming(val name: String, val details: String, val on: String)
+
+    private data class Held(val frame: Int, val side: String, val crop: Rect, val name: String, val details: String)
+
+    /**
+     * What each hand holds over time. Works with a moving camera and catches pick-up-and-put-back,
+     * which first-vs-last frame comparison cannot see. Held then empty = put down; still held = taken away;
+     * medicine held at all = picked up.
+     */
+    private suspend fun watchHands(frames: List<Bitmap>, tag: String, time: Long, room: String, nextId: () -> Long): List<MemoryRecord> {
+        val sightings = mutableListOf<Held>()
+        var calls = 0
+        for ((fi, frame) in frames.withIndex()) {
+            for (hand in pose.hands(frame)) {
+                if (calls++ >= MAX_HAND_CALLS) break
+                val row = rows(Prompts.HOLD, "What is this hand holding?", Images.crop(frame, hand.crop)).firstOrNull().orEmpty()
+                sightings += Held(fi, hand.side, hand.crop, objectName(row.getOrElse(0) { "" }), row.getOrElse(1) { "" })
+            }
+        }
+        Log.i(TAG, "$tag hands: " + sightings.joinToString { "${it.frame}/${it.side}=${it.name.ifBlank { "-" }}" })
+
+        val events = mutableListOf<MemoryRecord>()
+        for ((name, group) in sightings.filter { it.name.isNotBlank() }.groupBy { it.name }) {
+            val lastSeen = group.maxBy { it.frame }
+            // A thing already sitting at that spot before the person came (e.g. a charger on the sill) is scenery, not held.
+            val before = objectName(rows(Prompts.THERE_BEFORE, "What is here?", Images.crop(frames.first(), lastSeen.crop)).firstOrNull()?.firstOrNull().orEmpty())
+            if (before.isNotBlank() && (sameThing(before, name) || group.size < 2)) {
+                Log.i(TAG, "$tag drop held '$name': '$before' was already there"); continue
+            }
+            val frame = frames[lastSeen.frame]
+            val wide = expand(lastSeen.crop, 2.2f, frame.width, frame.height)
+            val where = runCatching { gemma.generate(Prompts.SURFACE, "Where is the hand?", Images.png(Images.crop(frame, wide)), 30, visionTokens = 280) }
+                .getOrDefault("").lines().firstOrNull().orEmpty().trim().trimEnd('.').ifBlank { "in view of the home camera" }
+            val released = sightings.any { it.side == lastSeen.side && it.frame > lastSeen.frame && it.name.isBlank() }
+            val kind = when {
+                Routines.isMedicine(name) -> MemoryKind.PICKED_UP
+                released -> MemoryKind.APPEARED
+                else -> MemoryKind.REMOVED
+            }
+            val img = store.saveImage(Images.jpeg(Images.crop(frame, wide)), "${tag}_hand_${name.replace(' ', '_')}.jpg")
+            Log.i(TAG, "$tag hand event: $kind $name $where (seen ${group.size}x, released=$released)")
+            events += MemoryRecord(nextId(), kind, name, group.first().details, where, room = room, timeMs = time,
+                source = "board", beforeImage = img, afterImage = img)
+        }
+        return events
+    }
+
+    private suspend fun rows(system: String, prompt: String, crop: Bitmap): List<List<String>> = runCatching {
+        gemma.generateRows(system, prompt, Images.png(Images.scale(crop, 768)), 30, visionTokens = 280)
+    }.onFailure { Log.w(TAG, "hand call failed", it) }.getOrDefault(emptyList())
+
+    private fun objectName(raw: String): String {
+        val n = raw.trim().lowercase()
+        return if (n.isBlank() || n in setOf("none", "nothing", "empty", "object", "hand", "unknown", "-")) "" else n
+    }
+
+    private fun expand(r: Rect, f: Float, w: Int, h: Int): Rect {
+        val hw = (r.width() * f / 2).toInt(); val hh = (r.height() * f / 2).toInt()
+        return Rect(maxOf(0, r.centerX() - hw), maxOf(0, r.centerY() - hh), minOf(w, r.centerX() + hw), minOf(h, r.centerY() + hh))
+    }
 
     private suspend fun name(frame: Bitmap, region: ChangeDetector.Region): Naming {
         val crop = Images.markBox(Images.crop(frame, region.cropBox), region.boxInCrop)
@@ -112,7 +181,7 @@ class ClipProcessor(
         return a.equals(b, true) || wa.intersect(wb).isNotEmpty()
     }
 
-    private fun frames(clip: File, middle: Int = 6): List<Bitmap> {
+    private fun frames(clip: File, middle: Int = 10): List<Bitmap> {
         if (clip.isDirectory) {
             val files = clip.listFiles { f -> f.extension.lowercase() in setOf("jpg", "jpeg", "png") }?.sortedBy { it.name } ?: return emptyList()
             if (files.size < 2) return emptyList()

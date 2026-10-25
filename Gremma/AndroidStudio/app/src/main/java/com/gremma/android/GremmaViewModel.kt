@@ -46,7 +46,8 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
     private val embedder = Embedder(application)
     private val finder = Finder(store, embedder, gemma)
     private val people by lazy { PersonDetector(application) }
-    private val clips by lazy { ClipProcessor(store, gemma, embedder, people) }
+    private val pose by lazy { PoseDetector(application) }
+    private val clips by lazy { ClipProcessor(store, gemma, embedder, people, pose) }
     private val work = Mutex()
     private val prefs = application.getSharedPreferences("gremma", Context.MODE_PRIVATE)
 

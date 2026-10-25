@@ -26,6 +26,7 @@ class GemmaService(private val context: Context) {
     private val lock = Mutex()
     var modelName: String? = null; private set
     var lastMs: Long = 0; private set
+    private var speculativeOk = true
 
     val isReady: Boolean get() = engine != null
 
@@ -63,7 +64,7 @@ class GemmaService(private val context: Context) {
         Log.i(TAG, "rows raw: ${raw.take(600)}")
         return raw.lines().map { it.trim().trimStart('-', '*', ' ') }.filter { it.contains('|') }.map { line ->
             line.split('|').map { cell -> cell.trim().let { if (it == "-") "" else it } }
-        }.filter { it.first().lowercase() != "name" }
+        }.filter { it.first().lowercase() !in setOf("name", "object", "action") }
     }
 
     @OptIn(ExperimentalApi::class)
@@ -73,13 +74,20 @@ class GemmaService(private val context: Context) {
                 val e = engine ?: error("The Gemma model is not loaded yet.")
                 ExperimentalFlags.visualTokenBudget = visionTokens
                 val started = System.currentTimeMillis()
-                val config = ConversationConfig(
+                fun config(speculative: Boolean) = ConversationConfig(
                     systemInstruction = Contents.of(system),
                     samplerConfig = SamplerConfig(1, 1.0, 0.0, 0),
                     maxOutputToken = maxTokens,
                     enableResponseFormat = schema != null,
+                    enableSpeculativeDecoding = speculative,
                 )
-                e.createConversation(config).use { conv ->
+                val conversation = if (!speculativeOk) e.createConversation(config(false)) else runCatching { e.createConversation(config(true)) }
+                    .getOrElse { err ->
+                        Log.w(TAG, "speculative decoding unavailable, falling back", err)
+                        speculativeOk = false
+                        e.createConversation(config(false))
+                    }
+                conversation.use { conv ->
                     val setupMs = System.currentTimeMillis() - started
                     val parts = buildList {
                         if (image != null) add(Content.ImageBytes(image))
@@ -91,7 +99,7 @@ class GemmaService(private val context: Context) {
                         conv.sendMessage(Contents.of(parts))
                     }
                     lastMs = System.currentTimeMillis() - started
-                    Log.i(TAG, "generate ${lastMs} ms (setup $setupMs) image=${image != null} json=${schema != null} vision=$visionTokens")
+                    Log.i(TAG, "generate ${lastMs} ms (setup $setupMs) image=${image != null} vision=$visionTokens speculative=$speculativeOk")
                     reply.toString().trim()
                 }
             }

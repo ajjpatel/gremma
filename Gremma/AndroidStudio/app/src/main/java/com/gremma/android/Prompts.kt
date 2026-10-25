@@ -43,6 +43,25 @@ name | details | on
 - on: the furniture or surface it is on or next to, e.g. on the kitchen counter, next to the kettle. Describe the surface even if the box is empty.
 Never guess an object that is not clearly visible."""
 
+    /** Validated in prompt-tests/hand_test.py: "keys | black" from a 480p handheld clip. */
+    val HOLD = """You see a close-up crop around a person's hand from a home camera.
+Say what small object the hand is holding, if any.
+Output exactly one line, nothing else:
+object | details
+- object: short common noun, e.g. keys, pill bottle, phone, mug. Write NONE if the hand is empty or you can't tell.
+- details: colour/material if clearly visible, else -"""
+
+    /** Same spot before the person arrived: was this object already sitting there? */
+    val THERE_BEFORE = """You see a crop from a fixed home camera.
+Name the main small object in this crop, if any.
+Output exactly one line, nothing else:
+object | details
+Write NONE | - if there is no small object, only surfaces, walls or furniture."""
+
+    val SURFACE = """You see a crop from a home camera around a person's hand.
+Say what furniture or surface the hand is over or touching, as a short location phrase, e.g. on the window sill, on the kitchen counter next to the kettle, on the floor by the door.
+Output exactly one line with only the phrase."""
+
     val READ_TEXT = """You read printed text aloud for a blind user. You get the photo and the raw OCR text from it.
 Read the useful text in natural reading order, in plain spoken sentences. Fix obvious OCR spacing errors but never invent words or numbers.
 If the text is unclear or cut off, say so. No markdown."""
