@@ -1,6 +1,8 @@
 # Gremma developer guide
 
-Native SwiftUI iPhone app with [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) **0.18.1** and Gemma **E4B** for visual activity analysis. Apple Speech provides on-device English voice input; speech synthesis reads answers aloud. Video indexing does not transcribe audio.
+The Android Studio project is in [`AndroidStudio/`](AndroidStudio/README.md). It is an early Android implementation; see its README for implemented features and remaining iOS parity work.
+
+Native SwiftUI iPhone app with [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) **0.18.1** and Gemma **E4B** for visual activity analysis. Apple Speech provides on-device English voice input; speech synthesis reads answers aloud. Video indexing does not transcribe audio. See the [product overview](../README.md).
 
 ## Build and run
 

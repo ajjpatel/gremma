@@ -4,6 +4,14 @@ A voice-first memory assistant for older adults with low vision, built with **Ge
 
 Record or upload a video. Gremma analyzes the visible activity and lets you ask what happened or where something was last seen.
 
+## Project components
+
+- [iPhone app and developer guide](Gremma/README.md)
+- [Android Studio app](Gremma/AndroidStudio/README.md)
+- [Ventuno Q camera capture and clip selection](video_stream/README.md)
+
+The feature and validation notes below describe the iPhone app. Each component's guide documents its own setup and integration status.
+
 ## Current app
 
 - **Activity memory:** ordered video frames distinguish supported placements, pickups, movements, sightings, and possible medicine-taking activities. Every event retains a video reference and recording time when known.
