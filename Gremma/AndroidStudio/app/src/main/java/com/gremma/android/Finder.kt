@@ -51,9 +51,10 @@ class Finder(private val store: MemoryStore, private val embedder: Embedder, pri
         var s = latest.spoken()
         if (latest.kind == MemoryKind.REMOVED) {
             hits.drop(1).firstOrNull { it.kind != MemoryKind.REMOVED }?.let { s += " Before that: " + it.spoken() }
-        } else if (hits.size > 1) {
-            val prev = hits[1]
-            s += " Earlier, at ${clock(prev.timeMs)}, ${prev.location}."
+        } else {
+            hits.drop(1).firstOrNull { !it.location.equals(latest.location, true) }?.let { prev ->
+                s += " Earlier, at ${clock(prev.timeMs)}, ${prev.location}."
+            }
         }
         return s
     }

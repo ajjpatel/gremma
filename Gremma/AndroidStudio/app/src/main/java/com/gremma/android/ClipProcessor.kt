@@ -26,6 +26,7 @@ class ClipProcessor(
     companion object {
         /** ~2.5 s each on the Pixel; caps background time per clip. */
         private const val MAX_HAND_CALLS = 14
+        private val NOT_A_SURFACE = Regex("\\b(wall|air|ceiling|window pane|nothing|person|body|pocket)\\b", RegexOption.IGNORE_CASE)
     }
 
     data class Outcome(val events: List<MemoryRecord>, val note: String, val hazards: List<MemoryRecord> = emptyList())
@@ -137,6 +138,9 @@ class ClipProcessor(
             val wide = expand(lastSeen.crop, 2.2f, frame.width, frame.height)
             val where = runCatching { gemma.generate(Prompts.SURFACE, "Where is the hand?", Images.png(Images.crop(frame, wide)), 30, visionTokens = 280) }
                 .getOrDefault("").lines().firstOrNull().orEmpty().trim().trimEnd('.').ifBlank { "in view of the home camera" }
+            if (NOT_A_SURFACE.containsMatchIn(where) && !Regex("\\b(on|in|under|next to|beside)\\b.*\\b(table|sill|shelf|counter|desk|floor|couch|bed|chair|cabinet|drawer|stand|tray|box|bowl|bag)\\b").containsMatchIn(where)) {
+                Log.i(TAG, "$tag drop held '$name': '$where' is not a place to put things"); continue
+            }
             val released = sightings.any { it.side == lastSeen.side && it.frame > lastSeen.frame && it.name.isBlank() }
             val kind = when {
                 Routines.isMedicine(name) -> MemoryKind.PICKED_UP
