@@ -85,7 +85,8 @@ class HomeCameraReceiver(context: Context, inbox: File, onStatus: (String) -> Un
         server = ClipUploadServer(PORT, inbox, File(context.cacheDir, "camera-uploads"), token, { directory ->
             // Android's FileInputStream cannot open directories; use the OS API for a durable rename.
             try {
-                val fd = Os.open(directory.absolutePath, OsConstants.O_RDONLY or OsConstants.O_DIRECTORY, 0)
+                check(directory.isDirectory) { "Clip directory is missing" }
+                val fd = Os.open(directory.absolutePath, OsConstants.O_RDONLY, 0)
                 try { Os.fsync(fd) } finally { Os.close(fd) }
             } catch (e: Exception) { throw IOException("Could not sync clip directory", e) }
         }, { message -> onStatus(message) })

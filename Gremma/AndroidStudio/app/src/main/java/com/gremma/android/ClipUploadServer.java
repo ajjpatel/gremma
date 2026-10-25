@@ -146,6 +146,7 @@ public final class ClipUploadServer extends NanoHTTPD {
         } catch (org.json.JSONException | java.time.DateTimeException | IllegalArgumentException e) {
             return error(400, "Invalid clip metadata");
         } catch (Exception e) {
+            java.util.logging.Logger.getLogger("GremmaUpload").log(java.util.logging.Level.WARNING, "Clip storage failed", e);
             listener.update("Clip could not be saved. The camera will retry.");
             return error(500, "Clip was not acknowledged; retry");
         } finally {

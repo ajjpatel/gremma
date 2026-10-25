@@ -292,7 +292,7 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
                 f.name !in done && !f.name.startsWith(".") &&
                     System.currentTimeMillis() >= (retryAfter[f.name] ?: 0) &&
                     (f.isDirectory || f.extension.lowercase() in setOf("mp4", "mov", "mkv", "webm")) &&
-                    System.currentTimeMillis() - newest(f) > 3000
+                    (f.parentFile == boardInbox || System.currentTimeMillis() - newest(f) > 3000)
             }.sortedBy { File(it, "video.mp4").takeIf { f -> f.isFile }?.lastModified() ?: it.lastModified() }
             for (clip in ready) {
                 if (!gemma.isReady) break
