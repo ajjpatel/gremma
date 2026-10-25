@@ -1,0 +1,12 @@
+# Hardware-free GStreamer profile for Linux development; no camera is accessed.
+storage_dir = "./data/synthetic"
+device_id = "synthetic-01"
+max_bytes = 128000000
+reserve_bytes = 16000000
+max_segment_bytes = 8000000
+min_free_bytes = 0
+segment_seconds = 2
+source = "videotestsrc is-live=true pattern=ball ! video/x-raw,width=640,height=480,framerate=15/1"
+encoder = "x264enc tune=zerolatency speed-preset=ultrafast bitrate=600 key-int-max=15"
+model_path = "./models/embeddinggemma-2"
+difference_threshold = 0.08

@@ -1,0 +1,31 @@
+[Unit]
+Description=Gremma video pipeline (%i)
+After=local-fs.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=gremma-video
+Group=gremma-video
+SupplementaryGroups=video render
+WorkingDirectory=/opt/gremma/video_stream
+EnvironmentFile=-/etc/gremma-video/upload.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/gremma/video_stream/.venv/bin/gremma-video --config /etc/gremma-video/config.toml %i
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=130
+KillMode=control-group
+UMask=0077
+StateDirectory=gremma-video
+StateDirectoryMode=0700
+# QMMF/CamX needs access to the board's real /dev and its camera service socket.
+# Enable further sandboxing only after testing the vendor driver stack.
+NoNewPrivileges=true
+ProtectSystem=full
+LimitCORE=0
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
