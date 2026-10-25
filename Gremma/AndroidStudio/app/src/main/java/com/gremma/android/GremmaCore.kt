@@ -5,12 +5,12 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,35 +34,46 @@ data class GremmaState(
     val heard: String = "",
     val cameraRequest: Action? = null,
     val lastMs: Long = 0,
+    val boardUrl: String = "",
 )
 
-class GremmaViewModel(application: Application) : AndroidViewModel(application) {
-    private val app: Application get() = getApplication()
+/** Lives as long as the process (kept alive by [WatchService]), so clips are handled with the screen closed. */
+class GremmaCore(private val app: Application) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _state = MutableStateFlow(GremmaState())
     val state: StateFlow<GremmaState> = _state.asStateFlow()
 
-    private val store = MemoryStore(application)
-    private val gemma = GemmaService(application)
-    private val embedder = Embedder(application)
+    private val store = MemoryStore(app)
+    private val gemma = GemmaService(app)
+    private val embedder = Embedder(app)
     private val finder = Finder(store, embedder, gemma)
-    private val people by lazy { PersonDetector(application) }
-    private val pose by lazy { PoseDetector(application) }
+    private val people by lazy { PersonDetector(app) }
+    private val pose by lazy { PoseDetector(app) }
     private val clips by lazy { ClipProcessor(store, gemma, embedder, people, pose) }
     private val work = Mutex()
-    private val prefs = application.getSharedPreferences("gremma", Context.MODE_PRIVATE)
+    private val prefs = app.getSharedPreferences("gremma", Context.MODE_PRIVATE)
 
-    val voice = Voice(application, onHeard = { ask(it) }, onState = { s -> _state.update { it.copy(heard = s) } })
+    val voice = Voice(app, onHeard = { ask(it) }, onState = { s -> _state.update { it.copy(heard = s) } })
 
     /** adb push models here: /sdcard/Android/data/com.gremma.android/files/models/ */
-    private val modelDirs = listOfNotNull(application.getExternalFilesDir("models"), File(application.filesDir, "Models").apply { mkdirs() })
-    /** The board's clips land here (adb push / downloader / Import clip). */
-    val inbox: File = (application.getExternalFilesDir("clips") ?: File(application.filesDir, "clips")).apply { mkdirs() }
+    private val modelDirs = listOfNotNull(app.getExternalFilesDir("models"), File(app.filesDir, "Models").apply { mkdirs() })
+    /** The board's clips land here (HTTP upload / adb push / Import clip). */
+    val inbox: File = (app.getExternalFilesDir("clips") ?: File(app.filesDir, "clips")).apply { mkdirs() }
+    private val clipsDone = prefs.getStringSet("clipsDone", emptySet())!!.toMutableSet()
+
+    /** The board posts clips here; set GREMMA_UPLOAD_TOKEN on the board to the same token. */
+    val uploadToken: String get() = prefs.getString("uploadToken", null) ?: "gremma-demo"
+    val receiver = ClipReceiver(inbox, token = { uploadToken })
 
     init {
         refresh()
-        viewModelScope.launch { loadModels() }
-        viewModelScope.launch { watchInbox() }
+        receiver.start()
+        _state.update { it.copy(boardUrl = receiver.url) }
+        scope.launch { loadModels() }
+        scope.launch { watchInbox() }
     }
+
+    fun setUploadToken(token: String) = prefs.edit().putString("uploadToken", token).apply()
 
     private fun refresh() = _state.update { it.copy(records = store.all()) }
 
@@ -91,6 +102,11 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
         runCatching { gemma.load(chat) }
             .onSuccess { _state.update { it.copy(modelName = gemma.modelName, busy = false, status = "Ready. Tap the microphone and ask.") } }
             .onFailure { e -> status("Could not load ${chat.name}: ${e.message}", busy = false) }
+        // The first image call after loading pays ~14 s of one-time GPU setup; pay it now rather than on the first clip.
+        if (gemma.isReady) runCatching {
+            val blank = android.graphics.Bitmap.createBitmap(64, 64, android.graphics.Bitmap.Config.ARGB_8888)
+            gemma.generate(Prompts.HOLD, "What is this hand holding?", Images.png(blank), 5)
+        }
     }
 
     private suspend fun reindexMissing() {
@@ -101,7 +117,7 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
         refresh()
     }
 
-    fun importModel(uri: Uri) = viewModelScope.launch {
+    fun importModel(uri: Uri) = scope.launch {
         status("Copying model…", busy = true)
         runCatching {
             withContext(Dispatchers.IO) {
@@ -114,7 +130,7 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
         }.onFailure { e -> status(e.message ?: "Model import failed.", busy = false) }
     }
 
-    fun importClip(uri: Uri) = viewModelScope.launch(Dispatchers.IO) {
+    fun importClip(uri: Uri) = scope.launch(Dispatchers.IO) {
         val name = displayName(uri) ?: "clip_${System.currentTimeMillis()}.mp4"
         app.contentResolver.openInputStream(uri)?.use { input -> File(inbox, name).outputStream().use { input.copyTo(it) } }
     }
@@ -134,7 +150,7 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
             _state.update { it.copy(cameraRequest = intent) }
             return
         }
-        viewModelScope.launch { work.withLock { answer(intent, q) } }
+        scope.launch { work.withLock { answer(intent, q) } }
     }
 
     /** adb test hook: run a photo action on an image already on the phone. */
@@ -142,7 +158,7 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
 
     fun quick(intent: Action) {
         if (intent in Router.NEEDS_PHOTO) _state.update { it.copy(cameraRequest = intent) }
-        else viewModelScope.launch { work.withLock { answer(intent, intent.name.lowercase().replace('_', ' ')) } }
+        else scope.launch { work.withLock { answer(intent, intent.name.lowercase().replace('_', ' ')) } }
     }
 
     fun cameraHandled() = _state.update { it.copy(cameraRequest = null) }
@@ -181,7 +197,7 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
         } finally { status("Ready.", busy = false) }
     }
 
-    fun onPhoto(uri: Uri, intent: Action) = viewModelScope.launch {
+    fun onPhoto(uri: Uri, intent: Action) = scope.launch {
         work.withLock {
             status("Looking…", busy = true)
             try {
@@ -226,26 +242,25 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
     // ---- Board clips ----
 
     private suspend fun watchInbox() {
-        val done = prefs.getStringSet("clipsDone", emptySet())!!.toMutableSet()
         while (true) {
+            _state.update { it.copy(boardUrl = receiver.url) }
             val ready = inbox.listFiles()?.filter { f ->
-                f.name !in done && !f.name.startsWith(".") &&
+                f.name !in clipsDone && !f.name.startsWith(".") &&
                     (f.isDirectory || f.extension.lowercase() in setOf("mp4", "mov", "mkv", "webm")) &&
                     System.currentTimeMillis() - newest(f) > 3000
             }?.sortedBy { it.lastModified() }.orEmpty()
             for (clip in ready) {
                 if (!gemma.isReady) break
-                work.withLock {
-                    status("New activity from the home camera…", busy = true)
-                    val outcome = runCatching { withContext(Dispatchers.Default) { clips.process(clip) } }
-                        .onFailure { Log.e("Gremma", "clip failed", it) }.getOrNull()
-                    done += clip.name; prefs.edit().putStringSet("clipsDone", done.toSet()).apply()
-                    refresh()
-                    outcome?.events?.firstOrNull()?.let { say("Home camera: " + outcome.note, it.evidenceImage, speak = false) }
-                    outcome?.hazards?.firstOrNull()?.let { say(Routines.hazardAlert(it), it.evidenceImage) }
-                    prefs.edit().remove("quietAlertFor").apply()
-                    status("Ready.", busy = false)
-                }
+                // Not under [work]: questions take turns with the clip's Gemma calls instead of waiting for the whole clip.
+                status("Looking at new activity from the home camera…")
+                val outcome = runCatching { withContext(Dispatchers.Default) { clips.process(clip, onSaved = ::refresh) } }
+                    .onFailure { Log.e("Gremma", "clip failed", it) }.getOrNull()
+                clipsDone += clip.name; prefs.edit().putStringSet("clipsDone", clipsDone.toSet()).apply()
+                refresh()
+                outcome?.events?.firstOrNull()?.let { say("Home camera: " + outcome.note, it.evidenceImage, speak = false) }
+                outcome?.hazards?.firstOrNull()?.let { say(Routines.hazardAlert(it), it.evidenceImage) }
+                prefs.edit().remove("quietAlertFor").apply()
+                if (!_state.value.busy) status("Ready.")
             }
             checkMedicineReminder()
             checkInactivity()
@@ -282,11 +297,10 @@ class GremmaViewModel(application: Application) : AndroidViewModel(application) 
     fun forget(id: Long) { store.delete(id); refresh() }
 
     fun clearAll() {
-        store.clear(); prefs.edit().remove("clipsDone").remove("changesAsked").apply(); refresh()
+        // Clips already in the inbox stay marked done, so clearing never replays old footage.
+        store.clear(); prefs.edit().remove("changesAsked").apply(); refresh()
         _state.update { it.copy(messages = emptyList()) }
     }
 
     fun imageFile(name: String?) = store.imageFile(name)
-
-    override fun onCleared() { voice.close(); gemma.close(); embedder.close(); super.onCleared() }
 }

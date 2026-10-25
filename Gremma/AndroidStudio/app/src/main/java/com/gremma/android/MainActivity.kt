@@ -8,7 +8,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -64,10 +63,15 @@ import androidx.core.content.FileProvider
 import java.io.File
 
 class MainActivity : ComponentActivity() {
-    private val vm: GremmaViewModel by viewModels()
+    private val vm: GremmaCore get() = (application as GremmaApp).core
+    private val notifyPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        startForegroundService(android.content.Intent(this, WatchService::class.java))
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFFFFC94D), onPrimary = Color.Black)) {
                 GremmaScreen(vm)
@@ -88,12 +92,13 @@ class MainActivity : ComponentActivity() {
             vm.askWithImage(Action.valueOf(intent.getStringExtra("action") ?: "DESCRIBE"), path)
         }
         if (intent?.hasExtra("quietMin") == true) vm.setQuietMinutes(intent.getIntExtra("quietMin", 180))
+        intent?.getStringExtra("token")?.let { vm.setUploadToken(it) }
         intent?.removeExtra("ask"); intent?.removeExtra("image")
     }
 }
 
 @Composable
-fun GremmaScreen(vm: GremmaViewModel) {
+fun GremmaScreen(vm: GremmaCore) {
     val state by vm.state.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -161,6 +166,7 @@ fun GremmaScreen(vm: GremmaViewModel) {
                     modifier = Modifier.fillMaxWidth().height(84.dp).semantics { contentDescription = "Talk to Gremma" },
                 ) { Text(if (state.busy) "Working…" else "🎤  Tap and ask", fontSize = 24.sp, color = Color.Black) }
             } else {
+                Text("Home camera uploads to ${state.boardUrl} · token ${vm.uploadToken}", color = Color.Gray, fontSize = 12.sp)
                 Row(Modifier.padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = { pickClip.launch(arrayOf("video/*")) }) { Text("Import clip") }
                     OutlinedButton(onClick = { pickModel.launch(arrayOf("*/*")) }) { Text("Add model") }
@@ -172,7 +178,7 @@ fun GremmaScreen(vm: GremmaViewModel) {
 }
 
 @Composable
-private fun ChatList(messages: List<ChatLine>, vm: GremmaViewModel) {
+private fun ChatList(messages: List<ChatLine>, vm: GremmaCore) {
     val list = rememberLazyListState()
     LaunchedEffect(messages.size) { if (messages.isNotEmpty()) list.animateScrollToItem(messages.size - 1) }
     LazyColumn(state = list, verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize().padding(vertical = 8.dp)) {
@@ -188,7 +194,7 @@ private fun ChatList(messages: List<ChatLine>, vm: GremmaViewModel) {
 }
 
 @Composable
-private fun RecordList(records: List<MemoryRecord>, vm: GremmaViewModel, empty: String) {
+private fun RecordList(records: List<MemoryRecord>, vm: GremmaCore, empty: String) {
     if (records.isEmpty()) { Text(empty, color = Color.Gray, modifier = Modifier.padding(16.dp)); return }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize().padding(vertical = 8.dp)) {
         items(records, key = { it.id }) { r ->

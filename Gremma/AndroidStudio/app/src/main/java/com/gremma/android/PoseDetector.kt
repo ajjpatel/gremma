@@ -6,6 +6,7 @@ import android.graphics.Rect
 import android.util.Log
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
 import kotlin.math.hypot
@@ -19,15 +20,18 @@ import kotlin.math.min
 class PoseDetector(context: Context) {
     data class Hand(val side: String, val crop: Rect)
 
-    private val landmarker: PoseLandmarker? = runCatching {
-        PoseLandmarker.createFromOptions(context, PoseLandmarker.PoseLandmarkerOptions.builder()
-            .setBaseOptions(BaseOptions.builder().setModelAssetPath("pose_landmarker_full.task").build())
-            .setRunningMode(RunningMode.IMAGE)
-            .setNumPoses(2)
-            .setMinPoseDetectionConfidence(0.3f)
-            .setMinPosePresenceConfidence(0.3f)
-            .build())
-    }.onFailure { Log.w("GremmaPose", "pose landmarker unavailable", it) }.getOrNull()
+    private val landmarker: PoseLandmarker? = (listOf(Delegate.GPU, Delegate.CPU)).firstNotNullOfOrNull { delegate ->
+        runCatching {
+            PoseLandmarker.createFromOptions(context, PoseLandmarker.PoseLandmarkerOptions.builder()
+                .setBaseOptions(BaseOptions.builder().setModelAssetPath("pose_landmarker_full.task").setDelegate(delegate).build())
+                .setRunningMode(RunningMode.IMAGE)
+                .setNumPoses(2)
+                .setMinPoseDetectionConfidence(0.3f)
+                .setMinPosePresenceConfidence(0.3f)
+                .build())
+        }.onSuccess { Log.i("GremmaPose", "pose landmarker on $delegate") }
+            .onFailure { Log.w("GremmaPose", "pose landmarker unavailable on $delegate", it) }.getOrNull()
+    }
 
     fun hands(bmp: Bitmap): List<Hand> {
         val lm = landmarker ?: return emptyList()
