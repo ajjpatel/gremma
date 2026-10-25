@@ -193,7 +193,8 @@ class Store:
     def lease_next(self, role: str):
         # Selection and flock acquisition are atomic with respect to eviction.
         if role == "worker":
-            query, args = "SELECT * FROM clips WHERE analysis='pending' ORDER BY seq LIMIT 1", ()
+            query, args = ("SELECT * FROM clips WHERE analysis='pending' AND seq>=? ORDER BY seq LIMIT 1",
+                           (self.cfg.analysis_start_seq,))
         elif role == "upload":
             query, args = ("SELECT * FROM clips WHERE upload='pending' AND retry_after<=? ORDER BY seq LIMIT 1", (time.time(),))
         else:
@@ -221,23 +222,22 @@ class Store:
                 raise ValueError("clip not found")
             self.db.execute("UPDATE clips SET last_access_ns=? WHERE id=?", (time.time_ns(), clip_id))
 
-    def complete_analysis(self, row, decision, state):
+    def complete_analysis(self, row, decision):
         with self.transaction():
             self.db.execute("UPDATE clips SET analysis='done', decision=?, upload=CASE WHEN ? AND upload!='sent' THEN 'pending' ELSE upload END WHERE id=?",
                 (json.dumps(decision, allow_nan=False), decision["send"], row["id"]))
-            # Retain one neighboring clip on either side of a proposed trigger.
-            if decision["candidate"]:
-                previous = self.db.execute("SELECT id FROM clips WHERE seq<? ORDER BY seq DESC LIMIT 1", (row["seq"],)).fetchone()
-                if previous:
-                    self.db.execute("UPDATE clips SET upload='pending' WHERE id=? AND upload='none'", (previous["id"],))
-            self.set_state("selector", state)
 
     def status(self):
         rows = self.db.execute("SELECT analysis, upload, count(*) AS count FROM clips GROUP BY analysis,upload").fetchall()
-        oldest = self.db.execute("SELECT min(started_ns) FROM clips WHERE analysis='pending'").fetchone()[0]
+        oldest = self.db.execute("SELECT min(started_ns) FROM clips WHERE analysis='pending' AND seq>=?",
+                                 (self.cfg.analysis_start_seq,)).fetchone()[0]
+        deferred = self.db.execute("SELECT count(*) FROM clips WHERE analysis='pending' AND seq<?",
+                                   (self.cfg.analysis_start_seq,)).fetchone()[0]
         return {"managed_bytes": self.managed_bytes(), "max_bytes": self.cfg.max_bytes,
                 "disk_free_bytes": shutil.disk_usage(self.root).free,
                 "queues": [dict(r) for r in rows],
+                "analysis_start_seq": self.cfg.analysis_start_seq,
+                "pending_before_start_seq": deferred,
                 "dropped_unprocessed_or_unsent": self.get_state("dropped_unprocessed_or_unsent", 0),
                 "missing_clips": self.get_state("missing_clips", 0),
                 "discarded_partial_clips": self.get_state("discarded_partial_clips", 0),

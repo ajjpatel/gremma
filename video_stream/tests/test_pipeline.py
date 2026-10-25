@@ -18,6 +18,12 @@ from gremma_video.upload import send_clip, upload_one
 from gremma_video.worker import Embedder, process_one
 
 
+def endpoints(first=(1, 0), last=(1, 0)):
+    return {"first_embedding": first, "last_embedding": last,
+            "frames": {"decoded_frames": 900, "first_frame_seconds": 0,
+                       "last_frame_seconds": 29.9666666667}}
+
+
 def hang_embedding(connection):
     time.sleep(60)
 
@@ -27,7 +33,7 @@ class StoreTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.cfg = Config(storage_dir=self.temp.name, max_bytes=20_000_000,
                           reserve_bytes=2_000_000, max_segment_bytes=1_000_000,
-                          min_free_bytes=0, selection_mode="filter")
+                          min_free_bytes=0)
         self.store = Store(self.cfg)
         self.addCleanup(self.temp.cleanup)
         self.addCleanup(self.store.close)
@@ -196,7 +202,7 @@ class StoreTest(unittest.TestCase):
         self.clip()
         model = Mock()
         model.encode.side_effect = TimeoutError()
-        self.assertTrue(process_one(self.store, model, motion_fn=lambda *_: 0.0))
+        self.assertTrue(process_one(self.store, model))
         other = Store(self.cfg)
         self.addCleanup(other.close)
         row = other.db.execute("SELECT * FROM clips").fetchone()
@@ -204,26 +210,40 @@ class StoreTest(unittest.TestCase):
         self.assertIn("analysis_unavailable", json.loads(row["decision"])["reasons"])
         self.assertFalse(process_one(self.store, model))
 
-    def test_pre_and_post_context_across_process_restart(self):
-        first, second, third, fourth = [self.clip(n * 5_000_000_000) for n in range(1, 5)]
+    def test_only_changed_clip_is_queued_across_restart(self):
+        first, second, third = [self.clip(n * 30_000_000_000) for n in range(1, 4)]
         model = Mock()
-        model.encode.return_value = [1, 0]
-        for _ in range(2):
-            process_one(self.store, model, motion_fn=lambda *_: 0.0)
-        # Make the first two delivered so the third trigger must requeue only
-        # the unsent previous clip, never resend an acknowledged clip.
-        self.store.db.execute("UPDATE clips SET upload='sent' WHERE id=?", (first,))
-        self.store.db.execute("UPDATE clips SET upload='none' WHERE id=?", (second,))
-        model.encode.return_value = [0, 1]
-        process_one(self.store, model, motion_fn=lambda *_: 0.0)
+        model.encode.return_value = endpoints()
+        process_one(self.store, model)
+        model.encode.return_value = endpoints(last=(0, 1))
+        process_one(self.store, model)
         other = Store(self.cfg)
         self.addCleanup(other.close)
-        process_one(other, model, motion_fn=lambda *_: 0.0)
+        model.encode.return_value = endpoints(first=(0, 1), last=(0, 1))
+        process_one(other, model)
         statuses = dict(other.db.execute("SELECT id,upload FROM clips"))
-        self.assertEqual(statuses[first], "sent")
-        self.assertEqual(statuses[second], "pending")
-        self.assertEqual(statuses[third], "pending")
-        self.assertEqual(statuses[fourth], "pending")
+        self.assertEqual(statuses, {first: "none", second: "pending", third: "none"})
+        self.assertEqual([c.args[0].name for c in model.encode.call_args_list],
+                         [f"{clip_id}.mp4" for clip_id in (first, second, third)])
+
+    def test_invalid_endpoint_output_is_preserved_for_upload(self):
+        self.clip()
+        model = Mock()
+        model.encode.return_value = endpoints(last=(math.nan, 0))
+        process_one(self.store, model)
+        row = self.store.db.execute("SELECT * FROM clips").fetchone()
+        self.assertEqual(row["upload"], "pending")
+        self.assertEqual(json.loads(row["decision"])["error"], "ValueError")
+
+    def test_analysis_cutoff_leaves_older_queue_entries_reversible(self):
+        old, new = self.clip(1), self.clip(2)
+        self.store.cfg = replace(self.cfg, analysis_start_seq=2)
+        with self.store.lease_next("worker") as (row, _):
+            self.assertEqual(row["id"], new)
+        self.assertEqual(self.store.status()["pending_before_start_seq"], 1)
+        self.store.cfg = self.cfg
+        with self.store.lease_next("worker") as (row, _):
+            self.assertEqual(row["id"], old)
 
     def test_upload_retries_and_acknowledges_without_deleting(self):
         clip_id = self.clip()
@@ -243,12 +263,12 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(sender.call_args.args[3]["clip_id"], clip_id)
         self.assertEqual(len(sender.call_args.args[3]["sha256"]), 64)
 
-    def test_late_analysis_does_not_requeue_an_acknowledged_context_clip(self):
+    def test_late_analysis_does_not_requeue_an_acknowledged_clip(self):
         self.clip()
         self.store.db.execute("UPDATE clips SET upload='sent'")
         model = Mock()
-        model.encode.return_value = [1, 0]
-        process_one(self.store, model, motion_fn=lambda *_: 0.0)
+        model.encode.return_value = endpoints(last=(0, 1))
+        process_one(self.store, model)
         self.assertEqual(self.store.db.execute("SELECT upload FROM clips").fetchone()[0], "sent")
 
     def test_bad_ack_never_counts_as_delivered(self):
@@ -285,67 +305,53 @@ class StoreTest(unittest.TestCase):
 
 class SelectionTest(unittest.TestCase):
     def setUp(self):
-        self.cfg = Config(selection_mode="filter")
-        self.row = {"started_ns": 10_000_000_000}
+        self.cfg = Config()
 
-    def test_stable_scene_eventually_suppressed(self):
-        first, state = decide(self.cfg, self.row, [1, 0], 0, {})
-        self.assertTrue(first["candidate"])
-        second, state = decide(self.cfg, {"started_ns": 15_000_000_000}, [1, 0], 0, state)
-        self.assertTrue(second["send"])  # post context
-        third, _ = decide(self.cfg, {"started_ns": 20_000_000_000}, [1, 0], 0, state)
-        self.assertFalse(third["send"])
+    def test_identical_endpoints_are_skipped_immediately(self):
+        decision = decide(self.cfg, endpoints())
+        self.assertFalse(decision["send"])
+        self.assertEqual(decision["cosine_distance"], 0)
+        self.assertEqual(decision["reasons"], ["endpoints_similar"])
 
-    def test_motion_preserves_semantically_similar_action(self):
-        _, state = decide(self.cfg, self.row, [1, 0], 0, {})
-        decision, _ = decide(self.cfg, self.row, [1, 0], 0.1, state)
+    def test_changed_endpoints_are_selected(self):
+        decision = decide(self.cfg, endpoints(last=(0, 1)))
         self.assertTrue(decision["send"])
-        self.assertIn("motion", decision["reasons"])
+        self.assertEqual(decision["cosine_distance"], 1)
+        self.assertEqual(decision["reasons"], ["endpoint_change"])
+        self.assertAlmostEqual(decision["frames"]["last_frame_seconds"], 29.9666666667)
 
-    def test_semantic_change_and_heartbeat(self):
-        _, state = decide(self.cfg, self.row, [1, 0], 0, {})
-        decision, _ = decide(self.cfg, self.row, [0, 1], 0, state)
-        self.assertIn("semantic_change", decision["reasons"])
-        decision, _ = decide(self.cfg, {"started_ns": 80_000_000_000}, [1, 0], 0, state)
-        self.assertIn("heartbeat", decision["reasons"])
+    def test_comparison_is_independent_of_previous_clip(self):
+        decide(self.cfg, endpoints(last=(0, 1)))
+        decision = decide(self.cfg, endpoints(first=(0, 1), last=(0, 1)))
+        self.assertFalse(decision["send"])
 
-    def test_observe_mode_does_not_filter_stable_scene(self):
-        cfg = replace(self.cfg, selection_mode="observe")
-        _, state = decide(cfg, self.row, [1, 0], 0, {})
-        _, state = decide(cfg, self.row, [1, 0], 0, state)
-        decision, _ = decide(cfg, self.row, [1, 0], 0, state)
-        self.assertTrue(decision["send"])
-        self.assertFalse(decision["candidate"])
+    def test_vectors_are_normalized_before_comparison(self):
+        decision = decide(self.cfg, endpoints(first=(2, 0), last=(100, 0)))
+        self.assertFalse(decision["send"])
 
-    def test_new_model_resets_embedding_comparison(self):
-        _, state = decide(self.cfg, self.row, [1, 0], 0, {})
-        cfg = replace(self.cfg, model_revision="new-snapshot")
-        decision, _ = decide(cfg, self.row, [0, 1], 0, state)
-        self.assertIsNone(decision["cosine_distance"])
-        self.assertIn("baseline", decision["reasons"])
-
-    def test_backward_clock_step_forces_heartbeat(self):
-        _, state = decide(self.cfg, self.row, [1, 0], 0, {})
-        decision, _ = decide(self.cfg, {"started_ns": 1}, [1, 0], 0, state)
-        self.assertIn("heartbeat", decision["reasons"])
+    def test_distance_must_exceed_threshold(self):
+        decision = decide(replace(self.cfg, difference_threshold=1), endpoints(last=(0, 1)))
+        self.assertFalse(decision["send"])
 
     def test_invalid_embeddings_rejected(self):
         for vector in ([], [0, 0], [math.nan], [math.inf]):
             with self.subTest(vector=vector), self.assertRaises(ValueError):
                 normalize(vector)
+        with self.assertRaises(ValueError):
+            decide(self.cfg, endpoints(last=(1, 0, 0)))
 
-    def test_fail_open_when_either_analysis_input_is_missing(self):
-        for vector, motion in ((None, 0), ([1, 0], None)):
-            decision, _ = decide(self.cfg, self.row, vector, motion, {})
-            self.assertIn("analysis_unavailable", decision["reasons"])
-            self.assertTrue(decision["send"])
+    def test_analysis_failure_does_not_claim_unchanged(self):
+        decision = decide(self.cfg, error="TimeoutError")
+        self.assertIn("analysis_unavailable", decision["reasons"])
+        self.assertTrue(decision["send"])
+        self.assertIsNone(decision["cosine_distance"])
 
 
 class ConfigTest(unittest.TestCase):
     def test_invalid_storage_or_threshold_rejected(self):
         for overrides in ({"max_bytes": 1}, {"segment_seconds": 0},
-                          {"reserve_bytes": 1}, {"novelty_threshold": math.nan},
-                          {"motion_threshold": 2}, {"selection_mode": "mystery"}):
+                          {"reserve_bytes": 1}, {"difference_threshold": math.nan},
+                          {"difference_threshold": 2}):
             with self.subTest(overrides=overrides), self.assertRaises(ValueError):
                 Config(**overrides)
 

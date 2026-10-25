@@ -19,26 +19,30 @@ def probe(path: Path, cfg: Config) -> float:
     return duration
 
 
-def motion_score(path: Path, cfg: Config) -> float:
-    """Maximum changed-pixel fraction between sampled grayscale frames.
+def endpoint_images(path: Path, threads=4):
+    """Decode to EOF, retaining only the first and final displayed frames.
 
-    This is a recall-oriented companion to semantic novelty, not recognition.
-    Sampling and downscaling can still miss small/brief actions.
+    Run inside the inference subprocess so its deadline bounds decoding too.
+    Seeking to duration minus a guessed interval can select an earlier frame,
+    especially with variable frame rates; decoding to EOF avoids that guess.
     """
-    width, height = 160, 90
-    result = subprocess.run(
-        [cfg.ffmpeg, "-nostdin", "-v", "error", "-i", str(path), "-an",
-         "-vf", f"fps=4,scale={width}:{height}", "-frames:v", "64",
-         "-pix_fmt", "gray", "-f", "rawvideo", "pipe:1"],
-        check=True, capture_output=True, timeout=30,
-    )
-    size = width * height
-    raw = result.stdout
-    if len(raw) < 2 * size or len(raw) % size:
-        raise ValueError("too few decoded frames to estimate motion")
-    score = 0.0
-    for offset in range(size, len(raw), size):
-        previous, current = raw[offset - size:offset], raw[offset:offset + size]
-        changed = sum(abs(a - b) >= 20 for a, b in zip(previous, current))
-        score = max(score, changed / size)
-    return score
+    import av
+    with av.open(str(path)) as container:
+        if not container.streams.video:
+            raise ValueError("clip has no video stream")
+        stream = container.streams.video[0]
+        stream.thread_type = "AUTO"
+        stream.codec_context.thread_count = threads
+        first = last = None
+        count = 0
+        for frame in container.decode(stream):
+            if first is None:
+                first = frame
+            last = frame
+            count += 1
+        if count < 2:
+            raise ValueError("clip needs at least two decoded frames")
+        metadata = {"decoded_frames": count,
+                    "first_frame_seconds": first.time,
+                    "last_frame_seconds": last.time}
+        return [first.to_image(), last.to_image()], metadata

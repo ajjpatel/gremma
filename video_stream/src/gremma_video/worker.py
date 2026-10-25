@@ -7,7 +7,7 @@ import threading
 import time
 
 from .config import Config
-from .media import motion_score
+from .media import endpoint_images
 from .selection import decide
 from .storage import Store
 
@@ -35,13 +35,23 @@ def _embedding_server(connection, model_path, threads):
         model = SentenceTransformer(
             model_path, device="cpu", local_files_only=True,
             config_kwargs={"audio_config": None},
+            # The checkpoint defaults to BF16, which can be emulated slowly on
+            # ARM CPUs without native BF16 instructions. Use the CPU FP32 path.
+            model_kwargs={"dtype": torch.float32},
         )
         while True:
             path = connection.recv()
             if path is None:
                 break
-            embedding = model.encode({"video": path}, normalize_embeddings=True)
-            connection.send((True, embedding.reshape(-1).tolist()))
+            images, frames = endpoint_images(Path(path), threads)
+            embeddings = model.encode(
+                [{"image": image} for image in images], batch_size=2,
+                normalize_embeddings=True, show_progress_bar=False,
+                processing_kwargs={"image": {"max_soft_tokens": 140}},
+            )
+            connection.send((True, {"first_embedding": embeddings[0].tolist(),
+                                    "last_embedding": embeddings[1].tolist(),
+                                    "frames": frames}))
     except EOFError:
         pass
     except Exception as exc:
@@ -94,30 +104,18 @@ class Embedder:
         self.process = self.connection = None
 
 
-def process_one(store, embedder, motion_fn=motion_score):
+def process_one(store, embedder):
     with store.lease_next("worker") as (row, _handle):
         if row is None:
             return False
         path = store.path(row["id"])
         started = time.monotonic()
-        vector, motion, errors = None, None, []
         try:
-            vector = embedder.encode(path)
-            # Validate before the gate, so bad model output takes fail-open path.
-            from .selection import normalize
-            vector = normalize(vector)
+            decision = decide(store.cfg, embedder.encode(path))
         except Exception as exc:
-            vector = None
-            errors.append(f"embedding:{type(exc).__name__}")
-            LOG.warning("embedding unavailable for %s: %s", row["id"], exc)
-        try:
-            motion = motion_fn(path, store.cfg)
-        except Exception as exc:
-            errors.append(f"motion:{type(exc).__name__}")
-            LOG.warning("motion unavailable for %s: %s", row["id"], exc)
-        decision, state = decide(store.cfg, row, vector, motion,
-                                 store.get_state("selector", {}), ";".join(errors) or None)
-        store.complete_analysis(row, decision, state)
+            LOG.warning("endpoint comparison unavailable for %s: %s", row["id"], exc)
+            decision = decide(store.cfg, error=type(exc).__name__)
+        store.complete_analysis(row, decision)
         store.set_state("worker", {"last_clip_id": row["id"], "analyzed_at_ns": time.time_ns(),
                                   "processing_seconds": time.monotonic() - started, "error": decision["error"]})
         LOG.info("analyzed %s send=%s reasons=%s", row["id"], decision["send"], decision["reasons"])

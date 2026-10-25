@@ -18,19 +18,20 @@ endpoint path is configurable. The example is `POST /v1/clips` over HTTPS.
   "clip_id": "f7242d52c8bd4bc68118b4a0fa69bd87",
   "device_id": "oracle-01",
   "started_at": "2026-10-24T21:00:00+00:00",
-  "duration_seconds": 5.0,
+  "duration_seconds": 30.0,
   "timing_quality": "capture_clock",
-  "size_bytes": 2500000,
+  "size_bytes": 15000000,
   "sha256": "<64 lowercase hex characters>",
   "selection": {
     "candidate": true,
     "send": true,
-    "reasons": ["motion"],
-    "cosine_distance": 0.04,
-    "motion_fraction": 0.12,
+    "reasons": ["endpoint_change"],
+    "method": "first_last_frame_embeddings",
+    "cosine_distance": 0.12,
+    "difference_threshold": 0.08,
+    "frames": {"decoded_frames": 900, "first_frame_seconds": 0, "last_frame_seconds": 29.9667},
     "model_revision": "<downloaded model commit SHA>",
-    "error": null,
-    "selection_mode": "filter"
+    "error": null
   }
 }
 ```
@@ -40,11 +41,10 @@ The board clock should be synchronized before use. Segments have separate MP4
 timelines; use metadata for their relationship to wall time. Segment duration
 can vary with keyframe boundaries. Sort by capture time, not arrival order.
 
-Selection reasons include `baseline`, `semantic_change`, `motion`, `heartbeat`,
-`analysis_unavailable`, `pre_context`, `post_context`, and `observe_mode`.
-Neighboring clips may already have a prior selection decision; the receiver
-should process every acknowledged clip, even when `candidate` is false. A
-pre-context clip without an analysis decision has only its `reasons` field.
+Changed clips have reason `endpoint_change`. Failed comparisons are forwarded
+with `analysis_unavailable` and an error type. `endpoints_similar` clips stay in
+the local ring and are not queued for upload. Frame timestamps are relative to
+the MP4 timeline; no intermediate-frame motion or cross-clip comparison is used.
 Scores are diagnostics, not probabilities or event labels.
 
 ## Response and retries

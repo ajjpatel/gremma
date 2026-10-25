@@ -67,7 +67,7 @@ v4l2-ctl --device /dev/video33 --list-ctrls
 
 The device number is image-dependent. Check the exact bitrate/GOP control names.
 Edit `source` and `encoder` in `config.local.toml` accordingly. The initial profile
-requests 1080p30, 4 Mbit/s, a one-second GOP, and five-second clips. Resolution,
+requests 1080p30, 4 Mbit/s, a one-second GOP, and 30-second clips. Resolution,
 NV12 versus NV12_Q08C, and DMA buffer modes are driver-dependent. Start with
 640x480 if the sensor rejects 1080p, then increase resolution after negotiation
 works. Small-object usefulness must be evaluated at the eventual resolution.
@@ -83,13 +83,42 @@ The watchdog stops a pipeline that does not finalize segments.
 ## 3. Install and qualify EmbeddingGemma 2
 
 ```bash
-.venv/bin/python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+.venv/bin/python -m pip install -r requirements.cpu-aarch64.txt
 .venv/bin/python -m pip install -e '.[embedding]'
 ```
 
 Install the CPU PyTorch wheels first. Current default Linux ARM64 wheels on
 PyPI include CUDA dependencies, which this Qualcomm board cannot use. See
 [PyTorch's installation guidance](https://pytorch.org/get-started/locally/).
+PyAV decodes the clip endpoints; Sentence Transformers embeds only those images.
+
+If board Wi-Fi is unreliable, download Linux ARM64 wheels on the Mac and copy
+them over USB. The target platform flags below are essential: Mac wheels cannot
+run on the board. Run from the Mac's `video_stream` checkout with Python 3.12:
+
+```bash
+python3 -m pip download -d /tmp/gremma-wheelhouse --only-binary=:all: \
+  --platform manylinux_2_28_aarch64 --platform manylinux_2_17_aarch64 \
+  --platform manylinux2014_aarch64 --python-version 3.12 \
+  --implementation cp --abi cp312 -r requirements.cpu-aarch64.txt wheel setuptools
+adb devices
+adb push /tmp/gremma-wheelhouse /home/arduino/gremma-wheelhouse
+adb shell
+```
+
+ADB is included in Google's [SDK Platform Tools](https://developer.android.com/tools/releases/platform-tools).
+Arduino documents this USB shell in its [VENTUNO Q access instructions](https://docs.arduino.cc/tutorials/ventuno-q/getting-started-ros2/).
+Inside the board's `video_stream` directory, install from those local wheels:
+
+```bash
+.venv/bin/python -m pip install --no-index --find-links /home/arduino/gremma-wheelhouse \
+  -r requirements.cpu-aarch64.txt wheel
+.venv/bin/python -m pip install --no-index --no-build-isolation -e '.[embedding]'
+.venv/bin/python -m pip check
+```
+
+The model snapshot can likewise be downloaded on the Mac with the helper below
+and copied to the board with `adb push`; preserve `snapshot-revision.txt`.
 
 Download once while connected. The included helper resolves a fixed model SHA,
 verifies each file, and prints the revision to put in `model_revision`. Serving
@@ -112,15 +141,16 @@ Library versions must understand that architecture. See Google's
 ```
 
 Check repeated warm-inference time, memory, temperature, queue depth and capture
-continuity while recording. A five-second recording interval needs sustained
-analysis throughput of at least one clip per five seconds. Increase clip length,
-tune sampled inputs, or validate an accelerated backend if CPU cannot keep up.
+continuity while recording. A 30-second recording interval needs sustained
+analysis throughput of at least one clip per 30 seconds. Each comparison embeds
+only the first and last frame, using a 140-token visual budget per image.
 The bounded ring cannot compensate for a permanently slower analyzer.
 
 Collect representative labeled examples of keys being placed, medicine being
 handled, groceries arriving, empty scenes, lighting changes, occlusions, and
-events crossing clip boundaries. Run in `observe` mode, measure event recall
-and forwarded-video fraction, then choose thresholds before enabling `filter`.
+events crossing clip boundaries. Measure endpoint-change recall and the forwarded-video fraction, then tune
+`difference_threshold`. An action that leaves matching endpoint scenes will be
+skipped even if intermediate frames show activity.
 
 ## 4. Run at boot
 

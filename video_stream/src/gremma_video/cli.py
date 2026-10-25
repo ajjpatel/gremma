@@ -75,19 +75,19 @@ def main():
         print(json.dumps(doctor(cfg), indent=2))
         return
     if args.command == "check-model":
-        from .media import motion_score, probe
-        from .selection import normalize
+        from .media import probe
+        from .selection import decide
         from .worker import Embedder
         path = Path(args.path).resolve()
         duration = probe(path, cfg)
         model = Embedder(cfg)
         started = time.monotonic()
         try:
-            vector = normalize(model.encode(path))
-            print(json.dumps({"duration_seconds": duration, "dimensions": len(vector),
+            result = model.encode(path)
+            decision = decide(cfg, result)
+            print(json.dumps({"duration_seconds": duration, "dimensions": len(result["first_embedding"]),
                               "inference_seconds_including_load": time.monotonic() - started,
-                              "motion_fraction": motion_score(path, cfg),
-                              "model_revision": cfg.model_revision}, indent=2))
+                              "selection": decision}, indent=2))
         finally:
             model.close()
         return

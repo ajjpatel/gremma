@@ -8,12 +8,12 @@ This directory is independent of the repository's existing iOS application.
 ## Data flow
 
 ```text
-IMX708 → QMMF/CamX → hardware H.264 → 5-second MP4 segments
+IMX708 → QMMF/CamX → hardware H.264 → 30-second MP4 segments
                                       ↓ atomic publication
                                16 GB ring + SQLite queue
                                       ↓ separate worker process
-                    EmbeddingGemma 2 + sampled motion + heartbeat
-                                      ↓ candidate + neighboring clips
+                    EmbeddingGemma 2: first frame vs last frame
+                                      ↓ changed clips only
                                persistent upload queue
                                       ↓ optional authenticated HTTPS
                                   Pixel application
@@ -52,23 +52,34 @@ synced, and its name is atomically changed from `.partial.mp4` to `.mp4`.
 ## Clip selection
 
 Use **`google/embeddinggemma-2`**, not the original text-only EmbeddingGemma.
-The CPU reference backend uses the documented Sentence Transformers video API,
-loads the text/vision model with audio disabled, and never downloads at runtime.
-It does not claim Qualcomm NPU acceleration. Qualify CPU throughput first;
-NPU deployment needs a separately validated model export/runtime.
+The CPU reference backend decodes each finalized clip to its actual first and
+last displayed frames, embeds those two images independently with audio disabled,
+and compares their normalized vectors using cosine distance. It queues the whole
+clip when `distance > difference_threshold` (initial value `0.08`); otherwise it
+marks that clip analyzed and moves to the next eligible clip in recording order.
+There is no cross-clip baseline, motion trigger, heartbeat, or neighbor forwarding.
 
-The worker compares normalized video embeddings using cosine distance, and
-also checks grayscale motion at 4 sampled frames/second. A candidate is selected
-if semantic novelty **or** motion exceeds the configured threshold, or a periodic
-heartbeat is due. Analysis errors send the clip rather than suppressing it.
-One available previous clip and the following clip provide boundary context.
+The model receives only two images, each with a 140-token visual budget. Decoding
+runs to EOF so variable frame rates and delayed codec frames do not cause an
+approximate seek to pick the wrong endpoint. Only the two endpoint images are
+retained in memory. Images and embeddings are not written as separate artifacts.
 
-**Default `selection_mode = "observe"` sends every clip** while recording gate
-scores. Change to `"filter"` after evaluating recall on your actual room/camera.
-The supplied thresholds are starting values, not measured operating points.
-Embedding similarity is not an activity detector: tiny objects, occlusions,
-and brief actions can be missed. These outputs are candidate video evidence;
-the phone must not turn “medicine handled” into verified ingestion.
+The reference stack uses FP32 on CPU and PyAV decoding, with versions in
+`requirements.cpu-aarch64.txt`. Model loading and decoding share a bounded
+subprocess deadline. If comparison fails, the clip is queued with
+`analysis_unavailable`; an error is not treated as an unchanged scene.
+No Qualcomm NPU acceleration is claimed.
+
+Calibrate the difference threshold against representative scenes. This detects
+endpoint changes, not all activity: an action that returns the scene to its
+starting appearance can be missed. Embeddings can also miss small objects or
+react to lighting/camera changes. The phone receives candidate evidence, not
+proof of an event or medicine ingestion.
+
+For an existing installation, `analysis_start_seq` can start analysis at a newer
+sequence without modifying earlier queue entries. The default `0` processes all
+pending clips. Resetting it to `0` resumes older clips still retained by the ring;
+`status` reports `pending_before_start_seq` separately.
 
 ## Setup and commands
 
@@ -113,5 +124,5 @@ RUN_GSTREAMER_SMOKE=1 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
 Neither synthetic video nor mocked embeddings establish IMX708 compatibility,
-model accuracy, or sustained real-time throughput. Hardware results and remaining
+endpoint-change accuracy, or sustained real-time throughput. Hardware results and remaining
 qualification are recorded in [board validation](docs/board-validation.md).

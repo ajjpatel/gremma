@@ -1,57 +1,85 @@
-# Validation record — October 24, 2026
+# Board validation — October 24, 2026 (Pacific time)
 
-Target inspected over SSH: VENTUNO Q, Ubuntu 24.04.4 LTS, ARM64,
-kernel `6.8.0-1078-qcom`. No credentials, household footage, or device network
-addresses are included in this repository.
+Target: Arduino VENTUNO Q, Ubuntu 24.04.4 LTS, ARM64, kernel
+`6.8.0-1078-qcom`. Credentials, network addresses, and household footage are
+excluded from the repository.
 
-## Completed checks
+## Automated and retention checks
 
-- Local Python suite: 34 tests passed; one real-media test requires GStreamer.
-- ARM64 board run after installing media dependencies: **34 tests passed** in
-  15.83 seconds, including real GStreamer synthetic recording, playable MP4
-  segments, graceful EOS, and FFmpeg motion extraction.
-- Hardware `v4l2h264enc` exists and advertises NV12, NV21, and NV12_Q08C inputs.
-- The starting image lacked `qtiqmmfsrc`, FFmpeg, and V4L2 diagnostic tools.
-- Read-only inspection identified the actual camera/encoder stack prerequisites.
-- Installed QMMF source, GStreamer good/bad/ugly/libav components, FFmpeg, V4L2
-  tools, and Python virtual-environment support. The missing `h264parse` plugin
-  was caught by the media test and resolved with the bad-plugins package.
-- Encoder controls include `video_gop_size`, `video_gop_closure`,
-  `video_b_frames`, and `video_bitrate`; the default profile uses those controls.
-- Hardware `v4l2h264enc` also produced continuous five-second MP4s for over
-  three minutes from a 640x480 NV12 synthetic source. That test used
-  `capture-io-mode=4 output-io-mode=2` because synthetic frames use system
-  memory. The camera's proposed DMA-import mode (`output-io-mode=5`) remains
-  unqualified until the sensor is detected.
-- EmbeddingGemma 2 snapshot `914f7f89142e33e77833254d9c9b90c3cef7303b`
-  downloaded and passed per-file integrity verification.
+- Current local suite: **35 passed, two Linux media tests skipped**.
+- Current board suite: **37 passed in 15.02 seconds**, including continuous
+  GStreamer recording, finalized MP4 playback, graceful EOS, and actual first/
+  last frame extraction. A red-then-blue H.264 test decoded all 20 frames and
+  verified the endpoints at 0.0 and 1.9 seconds, including delayed codec frames.
+- Queue tests verify that only the changed clip is queued, identical endpoints
+  are skipped immediately, comparison is independent of previous clips, failure
+  is explicit, and a configured analysis cutoff leaves earlier queue entries
+  untouched and resumable.
+- A separate real-recording rollover check used a 3 MB budget with a 1 MB
+  reserve: 23 clips produced, oldest 13 expired, ten remained. Managed usage
+  was 1,477,099 bytes; the first and last remaining MP4s passed FFprobe. Loss
+  accounting was 13, with zero missing files or discarded partials.
+- This verifies retention at a small budget; a full 16 GB soak is outstanding.
 
-## Camera detection blocker
+## Camera and recorder
 
-Installed CamX QCS9100 version `1.0.13+repack1` loads the IMX708 sensor module
-definitions. After restarting `cam-server.service`, it still reports zero
-probed sensors and zero cameras. Kernel messages show `rpi_imx708 read id: 0x0
-expected id 0x708` and I²C NACK/read errors. Physical IMX708 capture is therefore
-**not validated**. Check cable orientation/pinout, connector seating, port and
-sensor power with the board powered off; a known-good cable/camera comparison
-may be needed. These logs do not establish which component is at fault.
+The initial IMX708 sensor probe returned `0x0` instead of `0x708`. Reconnecting
+the camera and restarting `cam-server.service` resolved detection. CamX QCS9100
+`1.0.13+repack1` worked without a kernel upgrade.
 
-## Model runtime bring-up
+Physical H.264 capture passed at 640x480 and 1920x1080, approximately 30 fps.
+The 1080p test produced twelve playable clips, and a complete clip decoded with
+FFmpeg without errors. Camera input is NV12_Q08C; hardware encoder modes are
+capture 4 / output 5. Controls use `video_gop_size`, `video_gop_closure`,
+`video_b_frames`, and `video_bitrate`.
 
-Default PyPI Linux ARM64 PyTorch wheels attempted to fetch CUDA dependencies;
-installation was stopped and switched to PyTorch's CPU wheel index. After
-network timeouts, the `torch 2.14.1+cpu` ARM64 wheel downloaded successfully and
-passed its published SHA-256 check. Installation of the remaining dependencies
-was started, but SSH connectivity was lost before its result could be read.
-No model-inference or throughput result is claimed yet.
+`gremma-video@record.service` is enabled for boot and has restarted automatically
+after board reboots. Recovery retains finalized clips and counts discarded
+unfinished tails. The deployment now requests **30-second segments**, replacing
+the earlier five-second bring-up profile. The first four new clips measured
+29.006, 29.362, 29.620, and 29.003 seconds. Keyframe-driven durations must be read
+from each finalized clip's metadata.
 
-## Qualification still required
+Configuration: `/etc/gremma-video/config.toml`. Storage:
+`/var/lib/gremma-video`, with a 16,000,000,000-byte budget. This development
+installation runs as `arduino`, using the virtual environment and source at
+`/home/arduino/gremma-video-dev/video_stream`; it starts after `cam-server.service`.
+The generic dedicated-user installation is documented in board setup.
 
-Physical IMX708 detection/capture, actual model inference, warm sustained
-processing rate, camera-plus-model soak testing,
-on-device quota rollover, and delivery to the future Pixel receiver. The code
-does not claim these have passed until measured results are recorded here.
+The earlier 551 bring-up clips and their queue records remain untouched.
+`analysis_start_seq = 552` starts the new worker at the 30-second profile.
+Setting it back to `0` resumes older pending clips that have not expired.
 
-The synthetic test covers segmentation, graceful EOS, playable MP4s, and motion
-extraction. It cannot establish real-world event recall. The Pixel receiver is
-a proposed contract; there is no implemented Pixel application in this change.
+## Model runtime
+
+EmbeddingGemma 2 snapshot `914f7f89142e33e77833254d9c9b90c3cef7303b` passed
+per-file integrity verification. CPU dependencies were downloaded on the Mac
+and installed offline through USB after Wi-Fi downloads stalled. A 297 MB
+bundle transferred at 39.5 MB/s; transferred checksums and `pip check` passed.
+
+The current implementation uses CPU FP32, four model threads, PyAV endpoint
+decoding, and a 140-token visual budget for each of the two images. The pinned
+reference versions are in `requirements.cpu-aarch64.txt`. Only first and last
+frames are embedded; no intermediate-frame or cross-clip inference is used.
+
+The actual 1080p endpoint benchmark used a 29.006-second camera clip containing
+868 decoded frames, with endpoint timestamps 0.000 and 28.973 seconds. Both
+embeddings had 768 dimensions. Startup plus first comparison took **35.71 s**;
+the next two comparisons took **21.20 s** and **21.34 s**, while recording
+continued. All three returned the same cosine distance, 0.28171, above the
+0.08 threshold. This passes the short throughput check for the 30-second target;
+it is not a long thermal or workload soak.
+
+`gremma-video@worker.service` is enabled for boot and running. The live queue
+confirmed both outcomes: sequence 552 was queued with distance 0.28171; sequence
+553 was skipped with distance 0.01990. Neither had an analysis error. The worker
+reported 20.86 seconds for the second clip. Both recorder and worker had zero
+service restarts; their memory usage was approximately 191 MB and 2.85 GB.
+The uploader remains disabled because the Pixel receiver is not implemented.
+
+## Remaining qualification
+
+Sustained camera-plus-model throughput, a full 16 GB rollover soak, labeled
+endpoint-change recall/threshold calibration, and delivery to a real Pixel
+receiver. Endpoint comparison cannot detect an action whose ending scene matches
+its starting scene, and it does not establish medicine ingestion.

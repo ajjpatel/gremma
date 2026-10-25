@@ -27,7 +27,7 @@ def metadata(store, row, digest):
             "started_at": datetime.fromtimestamp(row["started_ns"] / 1e9, timezone.utc).isoformat(),
             "duration_seconds": row["duration"], "timing_quality": row["timing_quality"],
             "size_bytes": row["bytes"], "sha256": digest,
-            "selection": json.loads(row["decision"]) if row["decision"] else {"reasons": ["pre_context"]}}
+            "selection": json.loads(row["decision"]) if row["decision"] else {"reasons": ["analysis_unavailable"]}}
 
 
 def send_clip(cfg, row, handle, meta):

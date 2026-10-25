@@ -9,7 +9,7 @@ import time
 import unittest
 
 from gremma_video.config import load_config
-from gremma_video.media import motion_score, probe
+from gremma_video.media import endpoint_images, probe
 from gremma_video.storage import Store
 
 
@@ -49,7 +49,29 @@ encoder = "x264enc tune=zerolatency speed-preset=ultrafast bitrate=400 key-int-m
                 durations = [probe(store.path(row["id"]), cfg) for row in rows]
                 self.assertGreater(sum(durations), 6)
                 self.assertTrue(all(0 < value <= 3 for value in durations))
-                self.assertGreater(motion_score(store.path(rows[0]["id"]), cfg), 0)
+                images, frames = endpoint_images(store.path(rows[0]["id"]))
+                self.assertEqual(len(images), 2)
+                self.assertGreater(frames["decoded_frames"], 1)
+                self.assertGreater(frames["last_frame_seconds"], frames["first_frame_seconds"])
                 self.assertFalse(list(store.clips.glob("*.partial.mp4")))
             finally:
                 store.close()
+
+    def test_endpoints_are_first_and_final_decoded_frames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "red-then-blue.mp4"
+            subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i",
+                            "color=c=red:s=64x48:r=10:d=1", "-f", "lavfi", "-i",
+                            "color=c=blue:s=64x48:r=10:d=1", "-filter_complex",
+                            "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)],
+                           check=True, capture_output=True, timeout=20)
+            images, frames = endpoint_images(path)
+            self.assertEqual(frames["decoded_frames"], 20)
+            self.assertAlmostEqual(frames["first_frame_seconds"], 0)
+            self.assertAlmostEqual(frames["last_frame_seconds"], 1.9)
+            first, last = [image.getpixel((10, 10)) for image in images]
+            self.assertGreater(first[0], 240)
+            self.assertLess(first[2], 15)
+            self.assertGreater(last[2], 240)
+            self.assertLess(last[0], 15)
