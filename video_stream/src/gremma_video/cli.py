@@ -61,7 +61,7 @@ def main():
     parser = argparse.ArgumentParser(description="Gremma board camera pipeline")
     parser.add_argument("--config", required=True, help="TOML configuration file")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("record", "worker", "upload", "status", "doctor", "prune", "recover", "list"):
+    for name in ("record", "worker", "upload", "check-upload", "status", "doctor", "prune", "recover", "list"):
         command = sub.add_parser(name)
         if name in ("worker", "upload"):
             command.add_argument("--once", action="store_true")
@@ -71,6 +71,10 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     cfg = load_config(args.config)
+    if args.command == "check-upload":
+        from .upload import check_upload
+        print(json.dumps(check_upload(cfg), indent=2))
+        return
     if args.command == "doctor":
         print(json.dumps(doctor(cfg), indent=2))
         return

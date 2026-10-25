@@ -50,5 +50,6 @@ dependencies {
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.google.mediapipe:tasks-vision:1.0.0")
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

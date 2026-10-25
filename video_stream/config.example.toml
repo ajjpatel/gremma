@@ -22,11 +22,11 @@ difference_threshold = 0.08
 # Optional reversible cutoff for an existing queue; 0 analyzes all pending clips.
 analysis_start_seq = 0
 
-# Optional proposed receiver contract in docs/receiver-contract.md.
-# Leave empty until the Pixel receiver implements it. Nothing uploads by default.
+# Copy the URL and certificate pin from the Pixel app's Camera setup screen.
 upload_url = ""
 upload_token_env = "GREMMA_UPLOAD_TOKEN"
 upload_ca_file = "" # Optional CA PEM for a private/local receiver.
-upload_timeout_seconds = 30
+upload_cert_sha256 = ""
+upload_timeout_seconds = 300
 ffmpeg = "ffmpeg"
 ffprobe = "ffprobe"

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import math
+import re
 import tomllib
 from urllib.parse import urlsplit
 
@@ -32,7 +33,8 @@ class Config:
     upload_url: str = ""
     upload_token_env: str = "GREMMA_UPLOAD_TOKEN"
     upload_ca_file: str = ""
-    upload_timeout_seconds: int = 30
+    upload_cert_sha256: str = ""  # Exact certificate pin from the Pixel's Camera setup.
+    upload_timeout_seconds: int = 300
     ffmpeg: str = "ffmpeg"
     ffprobe: str = "ffprobe"
 
@@ -59,8 +61,11 @@ class Config:
                      "device_id", "ffmpeg", "ffprobe", "upload_token_env"):
             if not isinstance(getattr(self, name), str) or not getattr(self, name).strip():
                 raise ValueError(f"{name} must be a nonempty string")
-        if any(c in self.device_id for c in "\r\n"):
-            raise ValueError("device_id cannot contain newlines")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", self.device_id):
+            raise ValueError("device_id must be 1–64 letters, digits, underscores or hyphens")
+        if not isinstance(self.upload_cert_sha256, str) or (self.upload_cert_sha256 and
+                not re.fullmatch(r"[a-f0-9]{64}", self.upload_cert_sha256)):
+            raise ValueError("upload_cert_sha256 must be a lowercase SHA-256 fingerprint")
         if self.upload_url:
             url = urlsplit(self.upload_url)
             if url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment:

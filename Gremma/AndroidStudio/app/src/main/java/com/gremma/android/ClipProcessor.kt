@@ -31,10 +31,11 @@ class ClipProcessor(
     data class Outcome(val events: List<MemoryRecord>, val note: String, val hazards: List<MemoryRecord> = emptyList())
 
     suspend fun process(clip: File, room: String = ""): Outcome {
-        val frames = frames(clip)
-        if (frames.size < 2) return Outcome(emptyList(), "Clip ${clip.name}: not enough frames.")
+        val video = File(clip, "video.mp4").takeIf { clip.isDirectory && it.isFile } ?: clip
+        val frames = frames(video)
+        check(frames.size >= 2) { "Clip ${clip.name}: not enough readable frames." }
         val first = frames.first(); val last = frames.last()
-        val time = clip.lastModified().takeIf { it > 0 } ?: System.currentTimeMillis()
+        val time = video.lastModified().takeIf { it > 0 } ?: System.currentTimeMillis()
         val firstPeople = people.detect(first)
         val lastPeople = people.detect(last)
         val final = detector.compare(first, last, firstPeople + lastPeople).take(4)
