@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>App Build Guide — LiteRT-LM, step by step</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #f6f7f5;
+        --surface: #ffffff;
+        --surface-2: #eef1ee;
+        --ink: #15211c;
+        --ink-2: #43534b;
+        --ink-3: #6c7d73;
+        --line: #d8ded9;
+        --accent: #0c7256;
+        --accent-ink: #ffffff;
+        --accent-soft: #e2f0ea;
+        --warn: #9a5b00;
+        --warn-soft: #faf0da;
+        --danger: #a33327;
+        --danger-soft: #f9e7e4;
+        --code-bg: #101613;
+        --code-ink: #d9e6dd;
+        --code-dim: #7f968a;
+        --radius: 10px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d1210;
+          --surface: #151c18;
+          --surface-2: #1b241f;
+          --ink: #e7eee9;
+          --ink-2: #b3c2b8;
+          --ink-3: #84958a;
+          --line: #2a352e;
+          --accent: #3ec79e;
+          --accent-ink: #06231a;
+          --accent-soft: #173027;
+          --warn: #e8b34b;
+          --warn-soft: #2e2712;
+          --danger: #f08a7a;
+          --danger-soft: #33201c;
+          --code-bg: #080c0a;
+          --code-ink: #d9e6dd;
+          --code-dim: #71877b;
+        }
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: "IBM Plex Sans", system-ui, sans-serif;
+        font-size: 16.5px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px 80px; }
+
+      header.masthead { padding: 44px 0 8px; }
+      .masthead .over { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--accent); letter-spacing: .02em; margin: 0 0 10px; }
+      h1 { font-family: "IBM Plex Serif", serif; font-size: clamp(30px, 5.4vw, 46px); line-height: 1.12; margin: 0 0 14px; font-weight: 700; }
+      .lede { font-size: 18.5px; color: var(--ink-2); max-width: 46em; margin: 0; }
+      .lede strong { color: var(--ink); }
+
+      .layout { display: grid; grid-template-columns: 218px minmax(0, 1fr); gap: 44px; margin-top: 34px; align-items: start; }
+      nav.toc { position: sticky; top: 18px; font-size: 14.5px; }
+      nav.toc p { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-3); margin: 0 0 8px; letter-spacing: .04em; }
+      nav.toc a { display: block; color: var(--ink-2); text-decoration: none; padding: 5px 10px; border-radius: 6px; border-left: 2px solid transparent; }
+      nav.toc a:hover { color: var(--ink); background: var(--surface-2); }
+      nav.toc a.active { color: var(--accent); border-left-color: var(--accent); font-weight: 600; }
+      @media (max-width: 860px) {
+        .layout { grid-template-columns: 1fr; gap: 8px; }
+        nav.toc { position: static; display: flex; flex-wrap: wrap; gap: 4px; }
+        nav.toc p { width: 100%; }
+        nav.toc a { border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; background: var(--surface); }
+        nav.toc a.active { border-color: var(--accent); }
+      }
+
+      section { margin: 0 0 56px; scroll-margin-top: 16px; }
+      h2 { font-family: "IBM Plex Serif", serif; font-size: clamp(24px, 3.6vw, 32px); line-height: 1.2; margin: 0 0 8px; }
+      h2 .no { font-family: "IBM Plex Mono", monospace; font-size: .58em; color: var(--accent); vertical-align: .32em; margin-right: 10px; }
+      h3 { font-size: 19px; margin: 30px 0 8px; }
+      .sub { color: var(--ink-2); max-width: 44em; margin: 0 0 20px; }
+      p { max-width: 46em; }
+      ul, ol { max-width: 46em; padding-left: 22px; }
+      li { margin: 5px 0; }
+      a { color: var(--accent); }
+      code { font-family: "IBM Plex Mono", monospace; font-size: .88em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+      .mono { font-family: "IBM Plex Mono", monospace; }
+
+      /* answer banner */
+      .answer { background: var(--accent-soft); border: 1px solid var(--accent); border-radius: var(--radius); padding: 18px 20px; margin: 26px 0 8px; }
+      .answer p { margin: 0; max-width: none; }
+      .answer .q { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--accent); margin-bottom: 6px; }
+
+      /* tables */
+      .tblwrap { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); margin: 16px 0 24px; }
+      table { border-collapse: collapse; width: 100%; font-size: 15px; }
+      th { text-align: left; font-weight: 600; background: var(--surface-2); color: var(--ink); padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--ink-2); }
+      td strong, td b { color: var(--ink); }
+      tr:last-child td { border-bottom: none; }
+      td code { white-space: nowrap; }
+      @media (max-width: 640px) {
+        .tblwrap { border: none; background: transparent; }
+        table, tbody, tr, td { display: block; width: 100%; }
+        thead { display: none; }
+        tr { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 10px; padding: 6px 0; }
+        td { border-bottom: none; padding: 5px 14px; }
+        td::before { content: attr(data-l); display: block; font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-3); letter-spacing: .05em; margin-bottom: 1px; }
+        td code { white-space: normal; }
+      }
+
+      /* steps */
+      .steps { counter-reset: step; margin: 18px 0; }
+      .step { display: grid; grid-template-columns: 44px minmax(0,1fr); gap: 14px; padding: 16px 0; border-top: 1px solid var(--line); }
+      .step:first-child { border-top: none; padding-top: 4px; }
+      .step .n { counter-increment: step; width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--accent); color: var(--accent); font-family: "IBM Plex Mono", monospace; font-weight: 600; font-size: 15px; display: flex; align-items: center; justify-content: center; }
+      .step .n::before { content: counter(step); }
+      .step h4 { margin: 3px 0 5px; font-size: 16.5px; }
+      .step p { margin: 0 0 8px; color: var(--ink-2); }
+      .step p:last-child { margin-bottom: 0; }
+
+      /* code blocks */
+      .codeblock { position: relative; margin: 12px 0 18px; }
+      .codeblock pre { background: var(--code-bg); color: var(--code-ink); border-radius: var(--radius); padding: 16px 18px; overflow-x: auto; font-family: "IBM Plex Mono", monospace; font-size: 13.8px; line-height: 1.55; margin: 0; }
+      .codeblock pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
+      .codeblock .cm { color: var(--code-dim); }
+      .copybtn { position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,.08); color: #cfe0d5; border: 1px solid rgba(255,255,255,.18); border-radius: 6px; font-family: "IBM Plex Mono", monospace; font-size: 12px; padding: 4px 10px; cursor: pointer; }
+      .copybtn:hover { background: rgba(255,255,255,.16); }
+      .codelabel { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-3); margin: 14px 0 -6px; }
+
+      /* callouts */
+      .callout { border-radius: var(--radius); padding: 14px 18px; margin: 16px 0; font-size: 15.5px; }
+      .callout p { margin: 0; max-width: none; }
+      .callout .tag { font-family: "IBM Plex Mono", monospace; font-size: 12px; display: block; margin-bottom: 4px; letter-spacing: .03em; }
+      .callout.warn { background: var(--warn-soft); border: 1px solid var(--warn); }
+      .callout.warn .tag { color: var(--warn); }
+      .callout.bad { background: var(--danger-soft); border: 1px solid var(--danger); }
+      .callout.bad .tag { color: var(--danger); }
+      .callout.good { background: var(--accent-soft); border: 1px solid var(--accent); }
+      .callout.good .tag { color: var(--accent); }
+
+      /* tabs */
+      .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 0; }
+      .tab { font-family: inherit; font-size: 15px; font-weight: 600; padding: 9px 16px; border-radius: 8px 8px 0 0; border: 1px solid var(--line); border-bottom: none; background: var(--surface-2); color: var(--ink-2); cursor: pointer; }
+      .tab[aria-selected="true"] { background: var(--surface); color: var(--accent); box-shadow: inset 0 3px 0 var(--accent); }
+      .tabpanel { display: none; border: 1px solid var(--line); background: var(--surface); border-radius: 0 var(--radius) var(--radius) var(--radius); padding: 20px 22px; }
+      .tabpanel.open { display: block; }
+      .tabpanel h3 { margin-top: 0; }
+      .verdict { display: inline-block; font-family: "IBM Plex Mono", monospace; font-size: 12px; padding: 2px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); margin-bottom: 10px; }
+
+      /* stack diagram */
+      .stack { display: grid; gap: 10px; margin: 18px 0 8px; }
+      .layer { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 14px 18px; display: grid; grid-template-columns: 170px minmax(0,1fr); gap: 16px; }
+      .layer .lname { font-family: "IBM Plex Mono", monospace; font-size: 13px; font-weight: 600; color: var(--accent); padding-top: 2px; }
+      .layer p { margin: 0; color: var(--ink-2); font-size: 15.5px; }
+      .layer p strong { color: var(--ink); }
+      @media (max-width: 640px) { .layer { grid-template-columns: 1fr; gap: 4px; } }
+      .flow { text-align: center; color: var(--ink-3); font-family: "IBM Plex Mono", monospace; font-size: 13px; }
+
+      .checklist { list-style: none; padding: 0; max-width: 48em; }
+      .checklist li { padding: 9px 0 9px 30px; position: relative; border-bottom: 1px solid var(--line); color: var(--ink-2); }
+      .checklist li::before { content: ""; position: absolute; left: 2px; top: 13px; width: 15px; height: 15px; border: 2px solid var(--accent); border-radius: 4px; }
+      .checklist li strong { color: var(--ink); }
+
+      footer { border-top: 1px solid var(--line); padding-top: 18px; color: var(--ink-3); font-size: 14px; }
+      footer p { max-width: none; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="masthead">
+        <p class="over">Companion to the Hackathon Plan · Gemma 4 + LiteRT-LM · Android &amp; iOS</p>
+        <h1>How to build the app, step by step</h1>
+        <p class="lede">The engineering companion to the plan: exactly what to install, what to download, what you can use <strong>as-is with zero setup</strong>, what you embed as an SDK, and the order to build each feature in. Written for tomorrow — every step is something the team can actually finish in a day.</p>
+        <div class="answer">
+          <p class="q">THE SHORT ANSWER TO “DO WE SET UP LOCALLY, OR USE SOMETHING DIRECTLY?”</p>
+          <p><strong>Both, in layers.</strong> You use three things directly, with no conversion work at all: the <strong>AI Edge Gallery app</strong> (runs Gemma 4 on both phones in minutes — your safety net), the <strong>LiteRT-LM desktop CLI</strong> on the Mac (test prompts from a terminal before writing app code), and <strong>pre-built <code>.litertlm</code> model files</strong> from Google’s <code>litert-community</code> org on Hugging Face. Your own code is a thin native shell — Kotlin on Android, Swift on iOS — that loads those files through the <strong>LiteRT-LM SDK</strong>. You do <em>not</em> convert or train any model for this hackathon. Model conversion exists (Door 3 below) and is a post-hackathon topic.</p>
+        </div>
+      </header>
+
+      <div class="layout">
+        <nav class="toc" aria-label="Contents">
+          <p>CONTENTS</p>
+          <a href="#doors">1 · Three doors</a>
+          <a href="#stack">2 · The stack</a>
+          <a href="#downloads">3 · Downloads</a>
+          <a href="#mac">4 · Set up the Mac</a>
+          <a href="#cli">5 · Prove it on the CLI</a>
+          <a href="#android">6 · Build Android</a>
+          <a href="#ios">7 · Build iOS</a>
+          <a href="#models">8 · Model files</a>
+          <a href="#pieces">9 · The shared pieces</a>
+          <a href="#order">10 · Build order</a>
+          <a href="#gotchas">11 · Gotchas</a>
+          <a href="#convert">12 · Converting models</a>
+        </nav>
+
+        <main>
+          <section id="doors">
+            <h2><span class="no">01</span>Three doors — pick per job, not per project</h2>
+            <p class="sub">Everything in this guide is one of three moves. The tabs below spell out what each door involves, what it costs in time, and which parts of the app use it. Most teams only ever open Doors 1 and 2.</p>
+
+            <div class="tabs" role="tablist">
+              <button class="tab" role="tab" aria-selected="true" data-tab="door1">Door 1 · Use it directly</button>
+              <button class="tab" role="tab" aria-selected="false" data-tab="door2">Door 2 · Embed the SDK</button>
+              <button class="tab" role="tab" aria-selected="false" data-tab="door3">Door 3 · Convert a model</button>
+            </div>
+
+            <div class="tabpanel open" id="door1" role="tabpanel">
+              <span class="verdict">USE FOR: TONIGHT + DEMO FALLBACK · SETUP: ~15 MIN</span>
+              <h3>No code. Google ships two ready-made runners.</h3>
+              <p><strong>AI Edge Gallery</strong> (free, by Google, on both app stores) downloads Gemma 4 onto the phone and runs it fully on-device — chat, image input, and a Prompt Lab where you paste a system prompt and test it. No account, nothing leaves the phone. This is how you validate every prompt tonight, and it is the fallback demo if the team’s own build breaks in front of judges.</p>
+              <p><strong>LiteRT-LM CLI</strong> on the Mac does the same job from a terminal: import a model once, then chat with it, script it, and diff prompt versions quickly — far faster iteration than rebuilding a phone app for every wording change. Prompts that pass on the CLI get pasted into the app unchanged.</p>
+              <p>What Door 1 cannot do: your camera pipeline, your voice shell, your Find database. Anything user-facing beyond a chat window needs Door 2.</p>
+            </div>
+
+            <div class="tabpanel" id="door2" role="tabpanel">
+              <span class="verdict">USE FOR: THE ACTUAL APP · SETUP: ~1 HOUR PER PLATFORM</span>
+              <h3>Embed LiteRT-LM in a native app. This is the real build.</h3>
+              <p>LiteRT-LM is Google’s production runtime for language models (the successor to the MediaPipe LLM Inference API, which is now maintenance-only — do not start new code on it). It ships as a normal library: a Gradle dependency on Android, a Swift package on iOS. The API surface is deliberately tiny: an <code>Engine</code> loads a <code>.litertlm</code> file, a <code>Conversation</code> holds the chat, and replies stream back token by token.</p>
+              <p>Your app around it is ordinary native code: camera frames in, streamed text out to text-to-speech. The same model files, the same prompts, and the same data design run on both platforms — that is the honest version of “one system, two apps.”</p>
+              <p><strong>Flutter note:</strong> a community <code>litertlm</code> package exposes the same Engine/Conversation API in Dart, and the plan’s shared-UI idea can ride on it. But ARKit/ARCore depth and background processing still need native modules on each side, so Flutter saves UI code, not platform code. For a one-day build with two phone owners, native + native is the lower-risk split.</p>
+            </div>
+
+            <div class="tabpanel" id="door3" role="tabpanel">
+              <span class="verdict">USE FOR: AFTER THE HACKATHON · SETUP: HALF A DAY + GPU TIME</span>
+              <h3>Convert or fine-tune your own model into <code>.litertlm</code>.</h3>
+              <p>If you ever fine-tune Gemma (say, on accessibility narration examples), the checkpoint has to be exported to LiteRT format with <code>litert-torch</code> and quantized before a phone can load it. That pipeline lives in <a href="#convert">section 12</a>. It is real work with real traps, and none of it is needed tomorrow: Google’s stock instruction-tuned builds already do everything the demo asks of them. Skip this door until the trophy is home.</p>
+            </div>
+          </section>
+
+          <section id="stack">
+            <h2><span class="no">02</span>The stack — what runs where</h2>
+            <p class="sub">Four kinds of software, each doing only the job it is fast enough for. This is the three-tier design from the plan, expressed as components you actually install.</p>
+            <div class="stack">
+              <div class="layer">
+                <div class="lname">VOICE SHELL</div>
+                <p><strong>Platform speech APIs — no model download.</strong> iOS: Speech framework (on-device recognition) + <code>AVSpeechSynthesizer</code>. Android: <code>SpeechRecognizer</code> + <code>TextToSpeech</code>. Free, offline, instant. Gemma never does speech.</p>
+              </div>
+              <div class="flow">↓ spoken command · camera frames ↓</div>
+              <div class="layer">
+                <div class="lname">TIER 0 · ALWAYS ON</div>
+                <p><strong>LiteRT vision model + depth.</strong> A MediaPipe Tasks object detector (EfficientDet-Lite class, a few MB, &lt;50&nbsp;ms/frame) watches every frame; ARKit scene depth (LiDAR, iPhone) or ARCore Depth API (Pixel) gives distance. Frame-differencing decides whether anything changed. Costs almost nothing.</p>
+              </div>
+              <div class="flow">↓ only when the scene changes, or the user asks ↓</div>
+              <div class="layer">
+                <div class="lname">TIER 1 · ON DEMAND</div>
+                <p><strong>Gemma 4 via LiteRT-LM.</strong> E4B (3.65&nbsp;GB) on the iPhone 16 Pro Max; E2B (2.58&nbsp;GB) on a 12&nbsp;GB Pixel. Narrates scenes, reads labels, answers questions. Called rarely by design — that is the whole compute strategy.</p>
+              </div>
+              <div class="flow">↓ captions in · queries in ↓</div>
+              <div class="layer">
+                <div class="lname">MEMORY · FIND</div>
+                <p><strong>EmbeddingGemma + SQLite.</strong> EmbeddingGemma (308M; text-only config runs in ~200&nbsp;MB RAM) turns Gemma’s captions into vectors stored in a plain SQLite table on the phone. “Where are my keys?” is a cosine-similarity lookup, not a model call.</p>
+              </div>
+            </div>
+            <div class="tblwrap">
+              <table>
+                <thead><tr><th>Component</th><th>You install</th><th>Runtime</th><th>Size on phone</th></tr></thead>
+                <tbody>
+                  <tr><td data-l="Component"><strong>Scene narration, Read, Visualize</strong></td><td data-l="Install">Gemma 4 <code>.litertlm</code> file</td><td data-l="Runtime">LiteRT-LM SDK</td><td data-l="Size">2.58 GB (E2B) / 3.65 GB (E4B)</td></tr>
+                  <tr><td data-l="Component"><strong>Find (Record &amp; Find)</strong></td><td data-l="Install">EmbeddingGemma <code>.task</code> / LiteRT build</td><td data-l="Runtime">MediaPipe Tasks TextEmbedder or LiteRT</td><td data-l="Size">~120 MB file, ~200 MB RAM</td></tr>
+                  <tr><td data-l="Component"><strong>Hazard watch</strong></td><td data-l="Install">EfficientDet-Lite <code>.task</code> model</td><td data-l="Runtime">MediaPipe Tasks ObjectDetector</td><td data-l="Size">~5 MB</td></tr>
+                  <tr><td data-l="Component"><strong>Depth / distance</strong></td><td data-l="Install">Nothing — OS framework</td><td data-l="Runtime">ARKit (iOS) / ARCore (Android)</td><td data-l="Size">0</td></tr>
+                  <tr><td data-l="Component"><strong>Speech in / out</strong></td><td data-l="Install">Nothing — OS framework</td><td data-l="Runtime">Speech + AVSpeechSynthesizer / SpeechRecognizer + TTS</td><td data-l="Size">0</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p>Python’s place in this stack: prompt prototyping, the video-indexing experiment, and later the conversion pipeline — all on the Mac. It never ships inside either phone app.</p>
+          </section>
+          <section id="downloads">
+            <h2><span class="no">03</span>Downloads — everything, by device</h2>
+            <p class="sub">Every file this project needs, on the device that needs it. Two of the three lists happen <strong>tonight, on home Wi-Fi</strong>; the Pixel list can only happen at the venue, and only if a loaner actually materialises — which is exactly why the first two lists exist as insurance.</p>
+
+            <h3>iPhone 16 Pro Max — yours, tonight</h3>
+            <div class="tblwrap">
+              <table>
+                <thead><tr><th>Download</th><th>Size</th><th>Why</th></tr></thead>
+                <tbody>
+                  <tr><td data-l="Download"><strong>AI Edge Gallery</strong> — App Store, by Google LLC</td><td data-l="Size">~35 MB</td><td data-l="Why">Runs Gemma 4 fully on-device. This is your working demo tonight and the fallback demo tomorrow.</td></tr>
+                  <tr><td data-l="Download"><strong>Gemma 4 E4B</strong> — inside Gallery → Model Management</td><td data-l="Size">3.65 GB</td><td data-l="Why">The main model. Your phone handles it; all prompt rehearsal happens on this.</td></tr>
+                  <tr><td data-l="Download"><strong>Gemma 4 E2B</strong> — inside Gallery</td><td data-l="Size">2.58 GB</td><td data-l="Why">Fallback if E4B feels slow under demo load or thermal pressure.</td></tr>
+                  <tr><td data-l="Download"><strong>Latest iOS update</strong></td><td data-l="Size">Varies</td><td data-l="Why">Do it tonight. Never update an OS at the venue.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="callout warn"><span class="tag">BEFORE YOU START</span><p>Settings → General → iPhone Storage: confirm <strong>at least 8 GB free</strong> — both models plus the app need room to breathe. Download both models on home Wi-Fi tonight; venue Wi-Fi is a shared resource with every other team on it.</p></div>
+
+            <h3>Mac — tonight, and this is the long pole</h3>
+            <div class="tblwrap">
+              <table>
+                <thead><tr><th>Download</th><th>Size</th><th>Why</th></tr></thead>
+                <tbody>
+                  <tr><td data-l="Download"><strong>Xcode</strong> — Mac App Store</td><td data-l="Size">~12 GB download; needs 45–50 GB free to install</td><td data-l="Why">Builds the iOS app. The single biggest download of the project — <strong>start it before everything else</strong>.</td></tr>
+                  <tr><td data-l="Download"><strong>Xcode Command Line Tools</strong> — <code>xcode-select --install</code></td><td data-l="Size">~1 GB (estimate)</td><td data-l="Why">Git and the build tools everything else on this list depends on.</td></tr>
+                  <tr><td data-l="Download"><strong>Android Studio + Android SDK</strong></td><td data-l="Size">~8–10 GB with SDK (estimate)</td><td data-l="Why">Builds the Android app for the Pixel.</td></tr>
+                  <tr><td data-l="Download"><strong>Flutter SDK</strong></td><td data-l="Size">~2 GB (estimate)</td><td data-l="Why">The shared app layer, if the team builds the UI in Flutter (see Door 2).</td></tr>
+                  <tr><td data-l="Download"><strong>Homebrew + Python 3 + <code>uv</code></strong></td><td data-l="Size">Small</td><td data-l="Why">The toolchain the ML work below runs on.</td></tr>
+                  <tr><td data-l="Download"><strong><code>litert-torch</code></strong> — <code>uv tool install litert-torch-nightly</code></td><td data-l="Size">~1 GB (estimate)</td><td data-l="Why">Converts / fine-tunes models to <code>.litertlm</code>. Only needed for Door 3 work — not for running stock Gemma.</td></tr>
+                  <tr><td data-l="Download"><strong>Gemma 4 <code>.litertlm</code> backup copies</strong> — Hugging Face, <code>litert-community</code></td><td data-l="Size">E4B 3.65 GB + E2B 2.58 GB</td><td data-l="Why">Insurance: if venue Wi-Fi dies, the Pixel gets its model over USB from these files. Needs a free Hugging Face account + accepting the Gemma license — do that tonight too.</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h3>Pixel 11 Pro — loaner, at the venue, only if you get one</h3>
+            <div class="tblwrap">
+              <table>
+                <thead><tr><th>Download</th><th>Size</th><th>Why</th></tr></thead>
+                <tbody>
+                  <tr><td data-l="Download"><strong>AI Edge Gallery</strong> — Play Store</td><td data-l="Size">Under 50 MB</td><td data-l="Why">Same runtime as the iPhone — an instant working Gemma demo on the Pixel, before any team code exists.</td></tr>
+                  <tr><td data-l="Download"><strong>Gemma 4 E4B or E2B</strong> — inside Gallery</td><td data-l="Size">3.65 GB / 2.58 GB</td><td data-l="Why">Match the model to the unit: <strong>E4B only if it’s the 16 GB RAM tier</strong> (512 GB storage); <strong>E2B if it’s 12 GB RAM</strong> (256 GB storage). Check in Settings → About phone.</td></tr>
+                  <tr><td data-l="Download"><strong>The team’s Android build</strong></td><td data-l="Size">Small</td><td data-l="Why">Not downloaded — installed from the Mac over USB. Enable Developer Options (tap Build Number 7 times) and USB debugging first.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="callout good"><span class="tag">THE ORDER THAT MATTERS</span><p><strong>iPhone:</strong> both models tonight, on home Wi-Fi. <strong>Mac:</strong> the Xcode download starts before every other install — it decides your morning. <strong>Pixel:</strong> the model download starts the moment you arrive and claim the loaner, before any team discussion — it is the longest venue task and Wi-Fi only gets slower. Gallery needs no account and no login on either platform.</p></div>
+          </section>
+
+          <section id="mac">
+            <h2><span class="no">04</span>Set up the Mac — tonight, in this order</h2>
+            <p class="sub">One Mac builds both apps. The order matters because Xcode is the long pole: start its download first and install everything else while it runs. The full file list is <a href="#downloads">section 3</a>; this is the sequence.</p>
+            <div class="steps">
+              <div class="step"><div class="n"></div><div>
+                <h4>Check the disk, then start Xcode downloading</h4>
+                <p>Confirm 50 GB free. Xcode needs roughly 45–50 GB of working room between the compressed download and the unpacked app. Start the Mac App Store download <em>now</em> — on venue Wi-Fi tomorrow this step alone would eat the morning.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Command Line Tools, Homebrew, Python</h4>
+                <p class="codelabel">TERMINAL</p>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>xcode-select --install
+<span class="cm"># Homebrew (from brew.sh), then:</span>
+brew install python@3.12 uv git
+python3 --version &amp;&amp; uv --version</code></pre></div>
+                <p><code>uv</code> manages the Python tools (LiteRT-LM CLI, later <code>litert-torch</code>) without polluting the system Python.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Android Studio + SDK</h4>
+                <p>Install Android Studio, open it once, and let it download the SDK and platform tools. Confirm <code>adb</code> works — you will use it to push model files to the Pixel over USB:</p>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>adb version
+adb shell getprop ro.soc.model   <span class="cm"># later, with the Pixel plugged in — tells you which model variant it wants</span></code></pre></div>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Hugging Face account + Gemma license</h4>
+                <p>Create a free Hugging Face account and accept the Gemma license on the model pages <em>tonight</em> — the <code>litert-community</code> downloads are gated, and a license click is a stupid thing to be blocked on at 10 AM. Then log the CLI in:</p>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>uvx huggingface_hub login   <span class="cm"># paste your HF access token when asked</span></code></pre></div>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Download the model files to the Mac as backup</h4>
+                <p>Keep local copies of the E2B and E4B <code>.litertlm</code> files (~6.2 GB total). If venue Wi-Fi dies, models reach the Pixel over USB (<code>adb push</code>) and the iPhone through Finder/Xcode device storage. Files are listed in <a href="#models">section 8</a>.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Open Xcode once and finish its first-run setup</h4>
+                <p>Accept the license, let it install components and an iOS simulator runtime, and plug in the iPhone to pair it (trust prompt on the phone). A first launch at the venue burns 20 minutes you don’t have.</p>
+              </div></div>
+            </div>
+          </section>
+
+          <section id="cli">
+            <h2><span class="no">05</span>Prove the model on the Mac CLI — before any app code</h2>
+            <p class="sub">Thirty minutes here saves hours later: if Gemma answers your prompts well in a terminal, the phone work is “just” plumbing. If it doesn’t, you fix wording — on the machine where iteration takes seconds.</p>
+            <div class="steps">
+              <div class="step"><div class="n"></div><div>
+                <h4>Install the LiteRT-LM CLI</h4>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>python3 -m venv ~/.litert-env
+source ~/.litert-env/bin/activate
+pip install litert-lm</code></pre></div>
+                <p>Or skip the install for a one-off chat: <code>uvx litert-lm chat google/gemma-4-e2b-it</code> downloads and runs the E2B in one line.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Import the model</h4>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>litert-lm import \
+  --model-id litert-community/gemma-4-E2B-it-litert-lm \
+  --output-dir ~/.litert-lm/models/gemma4-e2b/</code></pre></div>
+                <p>This pulls the same <code>.litertlm</code> file the phones will run. On Apple Silicon the CLI uses the Metal GPU backend automatically, so speeds are in the same family as the phones.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Run the prompt test battery</h4>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>litert-lm run --model-path ~/.litert-lm/models/gemma4-e2b/model.litertlm</code></pre></div>
+                <p>Feed it the team’s test set: the narrator prompt on described scenes, the Read prompts on typed-out label text, and — critically — the ambiguous cases where the correct answer is <strong>“I can’t tell.”</strong> Score it against the trust scorecard from the plan page. Lock the winning wording in a shared <code>prompts.md</code>; both apps paste from that file, never from memory.</p>
+              </div></div>
+            </div>
+            <div class="callout good"><span class="tag">RULE OF THUMB</span><p>Temperature ~0.2–0.3 for Read and Find (factual — you want the boring answer), up to ~0.7 for Visualize (descriptive — you want some life in it). Cap narration at ~120 output tokens: at ~25 tokens/sec on the phone, that is the difference between a 3-second answer and a 10-second one.</p></div>
+          </section>
+
+          <section id="android">
+            <h2><span class="no">06</span>Build the Android app (Kotlin)</h2>
+            <p class="sub">The Pixel is the flagship demo device, so Android goes first. Target: a skeleton that loads Gemma and answers one question within the first hour.</p>
+            <div class="steps">
+              <div class="step"><div class="n"></div><div>
+                <h4>New project, one dependency</h4>
+                <p>Empty Activity project in Android Studio (Kotlin, Jetpack Compose is fine but not required). Add LiteRT-LM from Google Maven to the app module:</p>
+                <p class="codelabel">APP-LEVEL build.gradle.kts</p>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>dependencies {
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
+}</code></pre></div>
+                <p>That one line is the whole runtime. No native build, no Bazel, no NDK work — building LiteRT-LM from source is only for people patching the runtime itself.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Get the model file onto the device as a real file</h4>
+                <p>LiteRT-LM needs a filesystem path — it cannot read a model out of the APK assets directly, and a 2.6 GB file doesn’t belong in an APK anyway. For the hackathon, push the Mac backup over USB into app storage; for a shipped app, download on first launch instead (see <a href="#models">section 8</a>).</p>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>adb push gemma-4-E2B-it.litertlm /data/local/tmp/
+<span class="cm"># then copy it into the app's files dir from your setup screen,</span>
+<span class="cm"># or point the Engine at a path your app can read.</span></code></pre></div>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Create the Engine — once, at app start, off the UI thread</h4>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>val engine = Engine(EngineConfig(
+    modelPath = modelFile.absolutePath,
+    backend = Backend.GPU(),          <span class="cm">// fall back to Backend.CPU() if init fails</span>
+    cacheDir = context.cacheDir.path  <span class="cm">// speeds up every later load</span>
+))
+engine.initialize()  <span class="cm">// can take up to ~10 s — background coroutine, never per request</span></code></pre></div>
+                <p>Keep this Engine alive for the whole app session. Creating and destroying it per question is the single most common cause of “on-device AI is slow” demos.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Open a Conversation with the safety system prompt</h4>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>val conversation = engine.createConversation(ConversationConfig(
+    systemInstruction = Contents.of(SAFETY_SYSTEM_PROMPT),  <span class="cm">// from prompts.md</span>
+    samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.3)
+))</code></pre></div>
+                <p>One Conversation per mode (Narrate, Read, Find, Visualize), each with its own system prompt from <code>prompts.md</code>. Switching mode = switching conversation, not reloading the model.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Send a camera frame, stream the answer into TTS</h4>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>conversation.sendMessageAsync(
+    Message.of(imagePart, textPart)   <span class="cm">// frame + "What changed since: &lt;last summary&gt;?"</span>
+).collect { partial -&gt;
+    <span class="cm">// stream tokens: buffer to sentence boundaries,</span>
+    <span class="cm">// hand each finished sentence to TextToSpeech</span>
+}</code></pre></div>
+                <p><code>sendMessageAsync</code> returns a Kotlin <code>Flow</code> of partial replies. Speaking sentence-by-sentence instead of waiting for the full reply cuts perceived latency to roughly the first-token time (~1 s).</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Wire the rest</h4>
+                <p>CameraX for frames, <code>SpeechRecognizer</code> for commands, ARCore for the depth session, WorkManager (charging constraint) for background video indexing. Each is a standard Android library — no AI-specific surprises left once the Engine works.</p>
+              </div></div>
+            </div>
+          </section>
+
+          <section id="ios">
+            <h2><span class="no">07</span>Build the iOS app (Swift)</h2>
+            <p class="sub">Same architecture, Apple-shaped pieces. LiteRT-LM now ships an official open-source Swift API with a Metal GPU backend, so Gemma runs the same way as on Android — same <code>.litertlm</code> files, same prompts.</p>
+            <div class="steps">
+              <div class="step"><div class="n"></div><div>
+                <h4>New SwiftUI app, add the LiteRT-LM Swift package</h4>
+                <p>In Xcode: File → Add Package Dependencies, and add the LiteRT-LM Swift package from Google’s LiteRT-LM repository. (A community wrapper, <span class="mono">swift-litert-lm</span> on GitHub, packages the same runtime with a chat UI and in-app model download — a legitimate shortcut if the official package fights you at 11 AM.)</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Download the model on first launch — never bundle it</h4>
+                <p>The app binary stays small; on first launch it downloads <code>gemma-4-E4B-it.litertlm</code> (3.65 GB) from the <code>litert-community</code> Hugging Face repo into Application Support, marked excluded from iCloud backup, and reuses it forever after. Tonight, pre-download it over home Wi-Fi so tomorrow’s “first launch” is instant — or side-load the Mac backup through Xcode’s device storage.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Load the engine, open a conversation, stream</h4>
+                <p>The Swift API mirrors the Kotlin one: engine from a model file URL, conversation with a system instruction, streamed responses. Load once at app start on a background task; speak the reply via <code>AVSpeechSynthesizer</code> as sentences complete — identical pattern to Android step 5.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Test on the physical iPhone — the simulator lies</h4>
+                <p>The Metal GPU backend only engages in a signed app on a real device; the iOS Simulator silently falls back to CPU and everything looks 5–10× slower than reality. All performance judgements happen on the 16 Pro Max, never the simulator.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Wire the Apple pieces</h4>
+                <p>AVFoundation for camera, ARKit for LiDAR scene depth, Speech framework with on-device recognition for commands, Core Haptics for directional hazard taps, <code>BGProcessingTask</code> (runs while charging) for overnight video indexing.</p>
+              </div></div>
+            </div>
+            <div class="callout warn"><span class="tag">TEAM REALITY CHECK</span><p>Two native apps is two codebases. If the team is three people, not four, the honest cut is: build Android properly (loaner Pixel = flagship tracks), and run the iPhone demo through AI Edge Gallery + your locked prompts. A working Gallery demo on iOS beats a half-built Swift app on both.</p></div>
+          </section>
+          <section id="models">
+            <h2><span class="no">08</span>Model files — which one, from where, how it gets on the phone</h2>
+            <p class="sub">All files come from the <code>litert-community</code> organization on Hugging Face (free account + Gemma license acceptance required). The file name is a decision, not a detail — read the warning under the table.</p>
+            <div class="tblwrap">
+              <table>
+                <thead><tr><th>File</th><th>Size</th><th>Use it on</th><th>Notes</th></tr></thead>
+                <tbody>
+                  <tr><td data-l="File"><code>gemma-4-E4B-it.litertlm</code> (generic GPU build)</td><td data-l="Size">3.65 GB</td><td data-l="Use on"><strong>iPhone 16 Pro Max</strong></td><td data-l="Notes">Best quality narration. The generic build runs on any modern GPU — start here.</td></tr>
+                  <tr><td data-l="File"><code>gemma-4-E2B-it.litertlm</code> (generic GPU build)</td><td data-l="Size">2.58 GB</td><td data-l="Use on"><strong>Pixel 11 Pro, 12 GB tier</strong>; iPhone fallback</td><td data-l="Notes">Slightly weaker descriptions, noticeably lighter. Also your insurance if E4B stutters under demo load.</td></tr>
+                  <tr><td data-l="File"><code>gemma-4-E2B-it_Google_Tensor_G6.litertlm</code></td><td data-l="Size">~2.64 GB</td><td data-l="Use on">Pixel 11 Pro only, <em>if time remains</em></td><td data-l="Notes">NPU-compiled for the Pixel’s Tensor G6 — faster, but chip-locked. A stretch goal, not the plan.</td></tr>
+                  <tr><td data-l="File">EmbeddingGemma text embedder (<code>.task</code>)</td><td data-l="Size">~120 MB</td><td data-l="Use on">Both phones</td><td data-l="Notes">Powers Find. Milliseconds per embedding — cheap enough to run on every caption and every query.</td></tr>
+                  <tr><td data-l="File">EfficientDet-Lite detector (<code>.task</code>)</td><td data-l="Size">~5 MB</td><td data-l="Use on">Both phones</td><td data-l="Notes">Tier-0 hazard watch via MediaPipe Tasks. Any small LiteRT detector model works in this slot.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="callout bad"><span class="tag">THE VARIANT TRAP</span><p>SoC-specific builds are <strong>not interchangeable</strong>. An NPU-compiled file (Tensor, Snapdragon) embeds compiled ops for that one chip — load it on the wrong backend and it crashes; the generic GPU build cannot use the NPU either. Rule for tomorrow: <strong>ship the generic GPU build everywhere</strong>. Only touch a chip-specific file with that exact phone in your hand and an hour to spare. Check a Pixel’s chip with <code>adb shell getprop ro.soc.model</code>.</p></div>
+            <h3>How the model reaches the phone — three routes, pick per situation</h3>
+            <div class="tblwrap">
+              <table>
+                <thead><tr><th>Route</th><th>How</th><th>When</th></tr></thead>
+                <tbody>
+                  <tr><td data-l="Route"><strong>In-app download</strong></td><td data-l="How">App downloads the file from Hugging Face on first launch into app-private storage, verifies size, reuses it after</td><td data-l="When">The shippable way. Do this in the final build.</td></tr>
+                  <tr><td data-l="Route"><strong>USB side-load from the Mac</strong></td><td data-l="How"><code>adb push</code> to the Pixel; Xcode/Finder device storage to the iPhone, from the Mac backups</td><td data-l="When">Venue Wi-Fi is slow or dead. This is why the Mac carries copies.</td></tr>
+                  <tr><td data-l="Route"><strong>AI Edge Gallery</strong></td><td data-l="How">Gallery’s own Model Management downloads and manages the same files</td><td data-l="When">Tonight’s testing and the fallback demo — zero code.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p>Never bundle the model in the app package: it bloats the binary past store-friendly sizes, makes model swaps require an app update, and on iOS the GPU path wants a real file URL in app storage anyway.</p>
+          </section>
+
+          <section id="pieces">
+            <h2><span class="no">09</span>The shared pieces — build each feature from the same parts</h2>
+            <p class="sub">Nothing here is platform-specific in design — only in API names. Build each piece once per platform, in this dependency order.</p>
+
+            <h3>Piece 1 · Voice shell</h3>
+            <p>One big invisible talk button (press-and-hold) plus spoken menus. Speech-to-text and text-to-speech come from the OS (section 2) — your code is a state machine: <em>listen → match command → run mode → speak result → listen again</em>. Every screen must be reachable and readable through this loop alone; the visual UI is a debugging aid for sighted teammates.</p>
+
+            <h3>Piece 2 · Camera + delta gate</h3>
+            <p>Grab frames at ~2 fps. Downscale each to a small grayscale thumbnail and diff it against the last <em>kept</em> frame; also sample the depth map’s center region. Three outcomes:</p>
+            <ul>
+              <li><strong>Nothing changed</strong> → throw the frame away. No detector run, no Gemma call. This is where the 80–90% compute saving physically happens.</li>
+              <li><strong>Pixels changed, no near obstacle</strong> → run the Tier-0 detector; if the object set changed, escalate to Gemma with “previous summary + what changed?”.</li>
+              <li><strong>Depth says something is close and in-path</strong> → hazard path: haptic pulse (side = direction) and a short spoken warning from the detector + depth only. Gemma is never in this path — it is too slow and can invent things.</li>
+            </ul>
+
+            <h3>Piece 3 · The narration call</h3>
+            <p>One function, used by Narrate and Read: frame + mode prompt → streamed reply → TTS by sentence. Read mode is the same call with a stricter prompt (“Read exactly the text you can see. If a word is unreadable, say so — never guess a dosage, date, or amount.”) and temperature 0.2.</p>
+
+            <h3>Piece 4 · Find — the indexing pipeline</h3>
+            <div class="steps">
+              <div class="step"><div class="n"></div><div><h4>Record</h4><p>User walks the room filming (or imports a video). Store the video in app storage; indexing can happen later, while charging.</p></div></div>
+              <div class="step"><div class="n"></div><div><h4>Extract keyframes — reuse the delta gate</h4><p>Sample the video at 1 fps and keep only frames that differ meaningfully from the last kept one. A 3-minute room tour typically collapses to a few dozen frames.</p></div></div>
+              <div class="step"><div class="n"></div><div><h4>Caption each keyframe with Gemma</h4><p>Structured prompt, structured answer: room guess, items visible, and each item’s position relative to landmarks (“keys — kitchen counter, left of the stove”). Ask for JSON; validate before storing; on invalid JSON, retry once, then store the raw text.</p></div></div>
+              <div class="step"><div class="n"></div><div><h4>Embed and store</h4><p>Run the caption text through EmbeddingGemma and insert one SQLite row per item:</p>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>items(
+  id INTEGER PRIMARY KEY,
+  name TEXT,            <span class="cm">-- "keys"</span>
+  room TEXT,            <span class="cm">-- "kitchen"</span>
+  location_text TEXT,   <span class="cm">-- "counter, left of the stove"</span>
+  embedding BLOB,       <span class="cm">-- 768-dim float vector from EmbeddingGemma</span>
+  video_id INTEGER, ts INTEGER
+)</code></pre></div></div></div>
+              <div class="step"><div class="n"></div><div><h4>Answer queries by lookup, not generation</h4><p>“Where are my keys?” → embed the query → cosine similarity over the table (a few hundred rows is instant, no vector database needed) → speak the stored <code>location_text</code> verbatim. Gemma may polish the sentence, but the facts come from the row — this is what keeps Find honest.</p></div></div>
+            </div>
+
+            <h3>Piece 5 · Visualize</h3>
+            <p>No camera, no retrieval: a Gemma conversation seeded with the verified facts file for each demo monument (loaded as context text) and a fixed descriptive structure — overall scale in familiar comparisons, layout, then a slow mental walk-through. Facts from the file, colour from the model.</p>
+          </section>
+
+          <section id="order">
+            <h2><span class="no">10</span>Build order for hackathon day</h2>
+            <p class="sub">Sequenced so that at every hour mark, something demonstrable exists. If the day goes sideways, stop anywhere on this list and you still have a demo.</p>
+            <div class="steps">
+              <div class="step"><div class="n"></div><div><h4>Hour 0–1 · Both phones proven</h4><p>Gallery installed, model downloads started on the loaner Pixel immediately (see the downloads checklist), prompts from <code>prompts.md</code> passing the CLI battery on the Mac. Android skeleton created, LiteRT-LM dependency in, Engine loads on the Pixel with a hardcoded “hello” — the riskiest unknown dies first.</p></div></div>
+              <div class="step"><div class="n"></div><div><h4>Hour 1–2 · Hear it speak</h4><p>Camera frame → Gemma → streamed TTS. Voice command in via platform speech. You now have Narrate end-to-end on Android, however ugly.</p></div></div>
+              <div class="step"><div class="n"></div><div><h4>Hour 2–3 · Read mode + safety pass</h4><p>Read conversation (medicine label, expiry, currency) with the strict prompt; run the trust scorecard; fix every invented answer by tightening wording, not code. iOS dev mirrors the same flow (or prepares the Gallery demo if the team is three).</p></div></div>
+              <div class="step"><div class="n"></div><div><h4>Hour 3–4 · Find, one room</h4><p>Record the demo room, run the indexing pipeline, store ~10 items, voice-query them. This is the feature judges remember — protect this hour.</p></div></div>
+              <div class="step"><div class="n"></div><div><h4>Hour 4–5 · Delta gate + hazard awareness</h4><p>Frame-differencing in front of the narration call (count Gemma calls on screen — that counter is a pitch asset), detector + depth hazard path with haptics, honestly labelled assistive-not-navigation.</p></div></div>
+              <div class="step"><div class="n"></div><div><h4>Hour 5–6 · Visualize + polish</h4><p>Two monuments from verified facts. Then: airplane-mode rehearsal of the full 90-second script, twice, on both phones. Freeze features.</p></div></div>
+              <div class="step"><div class="n"></div><div><h4>Final hour · Demo hardening</h4><p>Charge everything, kill notifications, pre-load every conversation, rehearse the fallback (Gallery) switch. Nobody debugs live in front of judges.</p></div></div>
+            </div>
+          </section>
+
+          <section id="gotchas">
+            <h2><span class="no">11</span>Gotchas — the ones that actually bite</h2>
+            <ul class="checklist">
+              <li><strong>Engine init takes up to ~10 seconds.</strong> Load once at app start on a background thread, speak a “warming up” state, and keep the Engine resident. Per-request init is the classic demo-killer.</li>
+              <li><strong>LiteRT-LM is pre-1.0 (0.18.x).</strong> The API is small and stable enough to build on, but pin the exact version in Gradle/SPM and don’t upgrade mid-hackathon.</li>
+              <li><strong>MediaPipe’s LLM Inference API is maintenance-only.</strong> Old tutorials point at it; Google now puts new work into LiteRT-LM. MediaPipe Tasks is still the right tool for the detector and embedder — only the LLM piece moved.</li>
+              <li><strong>Wrong SoC variant = crash, not slowdown.</strong> Generic GPU build unless you are deliberately doing the NPU experiment (section 8).</li>
+              <li><strong>The simulator has no Metal GPU path.</strong> iOS performance testing happens on the physical iPhone only.</li>
+              <li><strong>Models need real file paths.</strong> Not APK assets, not Flutter assets, not bundle resources — a file in app storage with a path the Engine can open.</li>
+              <li><strong>Background indexing is OS-rationed.</strong> iOS <code>BGProcessingTask</code> and Android WorkManager both prefer charging + idle. Design Find so indexing is resumable and the demo room is indexed manually, in the foreground, on the day.</li>
+              <li><strong>Long answers are slow answers.</strong> Token caps per mode (section 5) are a performance feature, not an editing preference. Stream to TTS by sentence.</li>
+              <li><strong>Thermal reality.</strong> Sustained back-to-back Gemma calls throttle both phones. The delta gate isn’t an optimization — it’s what makes the app survivable. Show the call counter in the demo.</li>
+            </ul>
+          </section>
+
+          <section id="convert">
+            <h2><span class="no">12</span>Door 3 in detail — converting your own model (post-hackathon)</h2>
+            <p class="sub">Only for a fine-tuned or non-stock model. Stock Gemma builds never need this — they are published pre-converted, which is precisely why the hackathon build is feasible in a day.</p>
+            <div class="steps">
+              <div class="step"><div class="n"></div><div>
+                <h4>Fine-tune or pick a checkpoint on Hugging Face</h4>
+                <p>Work in PyTorch/HF format on the Mac (or a rented GPU for anything serious). Keep the base model’s tokenizer — the runtime expects it.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Export with litert-torch</h4>
+                <div class="codeblock"><button class="copybtn" type="button">Copy</button><pre><code>uv tool install litert-torch-nightly
+litert-torch export_hf \
+  --model your-org/your-finetuned-gemma \
+  --output ./out/model.litertlm   <span class="cm">// + int4/int8 quantization flags to fit phone RAM</span></code></pre></div>
+                <p>Quantization is not optional garnish: an unquantized build is several times larger and simply won’t fit the phone memory budget alongside the OS and your app.</p>
+              </div></div>
+              <div class="step"><div class="n"></div><div>
+                <h4>Validate on the CLI before touching a phone</h4>
+                <p>Run the exact trust-scorecard battery from section 5 against the exported file. Conversion bugs show up as quality bugs, not errors.</p>
+              </div></div>
+            </div>
+            <div class="callout bad"><span class="tag">THE CHAT-TEMPLATE TRAP</span><p>A known failure: exporting bundles the Hugging Face Jinja chat template, whose functions LiteRT-LM’s on-device template parser doesn’t support. The model loads, the tokenizer initializes, nothing crashes — and inference quietly produces garbage. If a converted model “works but talks nonsense,” suspect the template first and swap in a known-compatible one before re-exporting.</p></div>
+          </section>
+
+          <footer>
+            <p><strong>Reference points used above:</strong> Google’s LiteRT-LM announcement and docs (developers.googleblog.com — “Blazing fast on-device GenAI with LiteRT-LM”; developers.google.com LiteRT-LM / NPU guides), the <code>litert-community</code> model collection on Hugging Face, the <code>litertlm</code> Flutter package on pub.dev, and the community <code>swift-litert-lm</code> wrapper on GitHub. Versions cited (LiteRT-LM 0.18.x, Gemma 4 file sizes) were current as of Oct 23, 2026 — the runtime is pre-1.0, so re-check the dependency version when you sit down to build.</p>
+            <p>Companion page: <strong>Hackathon Plan</strong> (features, verdicts, prize strategy, demo script). This page is the how; that page is the what and why.</p>
+          </footer>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      // Door tabs
+      var tabs = document.querySelectorAll('.tab');
+      tabs.forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          tabs.forEach(function (t) { t.setAttribute('aria-selected', 'false'); });
+          document.querySelectorAll('.tabpanel').forEach(function (p) { p.classList.remove('open'); });
+          tab.setAttribute('aria-selected', 'true');
+          document.getElementById(tab.getAttribute('data-tab')).classList.add('open');
+        });
+      });
+
+      // Copy buttons
+      document.querySelectorAll('.copybtn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var code = btn.parentElement.querySelector('code').innerText;
+          function done() { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1600); }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(code).then(done, done);
+          } else {
+            var ta = document.createElement('textarea');
+            ta.value = code; document.body.appendChild(ta); ta.select();
+            try { document.execCommand('copy'); } catch (e) {}
+            document.body.removeChild(ta); done();
+          }
+        });
+      });
+
+      // TOC active highlight
+      var tocLinks = document.querySelectorAll('nav.toc a');
+      var sections = document.querySelectorAll('main section[id]');
+      if ('IntersectionObserver' in window) {
+        var obs = new IntersectionObserver(function (entries) {
+          entries.forEach(function (en) {
+            if (en.isIntersecting) {
+              tocLinks.forEach(function (a) { a.classList.toggle('active', a.getAttribute('href') === '#' + en.target.id); });
+            }
+          });
+        }, { rootMargin: '-10% 0px -70% 0px' });
+        sections.forEach(function (s) { obs.observe(s); });
+      }
+    </script>
+  </body>
+</html>

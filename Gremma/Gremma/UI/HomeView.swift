@@ -1,10 +1,10 @@
 import SwiftUI
 
 enum AppMode: String, CaseIterable, Identifiable {
-    case remember = "Remember", read = "Read", imagine = "Imagine"
+    case remember = "Activities"
     var id: String { rawValue }
     var symbol: String {
-        switch self { case .remember: return "sparkle.magnifyingglass"; case .read: return "text.viewfinder"; case .imagine: return "sparkles" }
+        switch self { case .remember: return "clock.arrow.circlepath" }
     }
 }
 
@@ -13,6 +13,7 @@ struct HomeView: View {
     @EnvironmentObject var model: LocalModelService
     @EnvironmentObject var voice: VoiceService
     @ObservedObject private var cameraActivity = CameraActivityState.shared
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showingModels = false
     @State private var showingMemories = false
@@ -21,6 +22,7 @@ struct HomeView: View {
     @State private var pendingToolAction: (() -> Void)?
     @State private var pendingVideoAction: (() -> Void)?
     @State private var correctedVideoRoom = ""
+    @State private var videoRecordingDate = Date()
     @State private var message = ""
     @FocusState private var isTyping: Bool
 
@@ -45,8 +47,6 @@ struct HomeView: View {
                         }
                         conversation
                         if app.pendingVideoID != nil && !app.isWorking { videoRoomConfirmation }
-                        if let job = app.retryVideoJob, !app.isWorking { videoRecoveryCard(job) }
-                        if showingDeveloperStatus { developerStatus }
                         if app.isWorking { progressCard }
                         if let error = app.error { errorCard(error) }
                         if let error = voice.error, error != app.error {
@@ -54,7 +54,6 @@ struct HomeView: View {
                                 .font(.callout).foregroundStyle(Color(red: 1, green: 0.79, blue: 0.54))
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        toolLinks
                         Color.clear.frame(height: 1).id("conversation-end")
                     }
                     .padding(.horizontal, 24).padding(.top, 18).padding(.bottom, 12)
@@ -72,12 +71,16 @@ struct HomeView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showingModels) { ModelSetupView() }
             .sheet(isPresented: $showingMemories) { MemoryListView() }
+            .sheet(isPresented: $app.showActivityTimeline) { ActivityTimelineView() }
+            .sheet(isPresented: $app.showReminders) { MedicineReminderView(reminders: app.reminders) }
             .sheet(isPresented: $showingTools, onDismiss: finishToolDismissal) { toolsSheet }
             .sheet(isPresented: $app.showVideoLibrary, onDismiss: finishVideoDismissal) {
                 VideoLibraryView(onImport: {
                     pendingVideoAction = { app.openVideo(record: false) }
                 }, onResume: { id in
                     pendingVideoAction = { app.resumeVideo(id: id) }
+                }, onReanalyze: { job in
+                    pendingVideoAction = { app.reanalyzeVideo(job) }
                 })
             }
             .fullScreenCover(item: $app.captureRequest) { request in
@@ -92,7 +95,11 @@ struct HomeView: View {
                         .ignoresSafeArea()
                 }
             }
-            .task { await app.refreshMemory() }
+            .task { await app.appBecameActive() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await app.appBecameActive() } }
+                else if phase == .background { app.stop() }
+            }
             .onChange(of: app.pendingVideoID) { _, _ in correctedVideoRoom = "" }
         }
         .tint(accent)
@@ -114,14 +121,14 @@ struct HomeView: View {
             Spacer(minLength: 8)
             Button {
                 pauseVoiceForSheet()
-                showingModels = true
+                showingTools = true
             } label: {
-                Image(systemName: "slider.horizontal.3").font(.title3)
+                Image(systemName: "ellipsis").font(.title3)
                     .frame(minWidth: 48, minHeight: 48)
                     .background(.white.opacity(0.07), in: Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Gremma settings and local models")
+            .accessibilityLabel("Gremma menu, videos and settings")
         }
     }
 
@@ -131,13 +138,8 @@ struct HomeView: View {
                 .font(.largeTitle.weight(.semibold)).tracking(-0.7)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            Text("Read a label. Find your keys.\nOr start with hello.")
+            Text("Remember your day.\nFind your keys.")
                 .font(.title3).foregroundStyle(muted).fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 4) {
-                suggestion("What can you help me with?", symbol: "bubble.left")
-                suggestion("Read this label", symbol: "text.viewfinder")
-                suggestion("Remember where I put this", symbol: "camera")
-            }.padding(.top, 6)
         }
         .padding(.vertical, 14)
     }
@@ -174,18 +176,10 @@ struct HomeView: View {
         } else if let image = app.evidenceImage {
             evidencePhoto(image)
         }
-        if voice.isListening {
-            VStack(alignment: .leading, spacing: 9) {
-                Label("Listening · microphone on", systemImage: "waveform")
-                    .font(.caption.weight(.semibold)).foregroundStyle(accent)
-                if !liveTranscript.isEmpty {
-                    Text(liveTranscript).font(.title3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            .background(accent.opacity(0.045), in: RoundedRectangle(cornerRadius: 16))
-            .accessibilityElement(children: .combine)
+        if voice.isListening && !liveTranscript.isEmpty {
+            Text(liveTranscript).font(.title3).foregroundStyle(muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("You are saying: \(liveTranscript)")
         }
     }
 
@@ -198,12 +192,16 @@ struct HomeView: View {
                     Image(systemName: "speaker.wave.2").font(.title3).frame(minWidth: 48, minHeight: 48)
                 }.buttonStyle(.plain).accessibilityLabel("Hear Gremma's answer again")
             }
-            if let image = app.evidenceImage { evidencePhoto(image) }
             Text(app.answer).font(.title3).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-            if !app.evidenceCaption.isEmpty {
-                Text(app.evidenceCaption).font(.caption).foregroundStyle(muted)
-                    .fixedSize(horizontal: false, vertical: true)
+            if let image = app.evidenceImage {
+                DisclosureGroup("View video evidence") {
+                    evidencePhoto(image).padding(.top, 10)
+                    if !app.evidenceCaption.isEmpty {
+                        Text(app.evidenceCaption).font(.caption).foregroundStyle(muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }.font(.subheadline)
             }
         }
         .padding(20).frame(maxWidth: .infinity, alignment: .leading)
@@ -226,13 +224,13 @@ struct HomeView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let job = app.retryVideoJob, app.videoProgress != nil {
-                ProgressView(value: job.progress) {
-                    Text("\(job.nextFrameIndex) of \(job.sampleTimes.count) frames saved")
+                ProgressView(value: job.memoryProgress) {
+                    Text("\(job.nextActivityWindowIndex) of \(job.activityWindowCount) activity segments saved")
                         .font(.callout)
                 }
                 .tint(accent)
                 .accessibilityLabel("Saved video progress")
-                .accessibilityValue("\(job.nextFrameIndex) of \(job.sampleTimes.count) frames")
+                .accessibilityValue("\(Int(job.memoryProgress * 100)) percent")
             } else if let progress = app.videoProgress {
                 ProgressView(value: progress).tint(accent)
                     .accessibilityLabel("Saved video progress")
@@ -247,25 +245,25 @@ struct HomeView: View {
                 .font(.headline).accessibilityAddTraits(.isHeader)
             Text(job.room).font(.title3.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
-            ProgressView(value: job.progress) {
-                Text("\(job.nextFrameIndex) of \(job.sampleTimes.count) frames saved")
+            ProgressView(value: job.memoryProgress) {
+                Text("\(job.nextActivityWindowIndex) of \(job.activityWindowCount) activity segments saved")
                     .font(.callout)
             }
             .tint(accent)
             .accessibilityLabel("Saved video progress")
-            .accessibilityValue("\(job.nextFrameIndex) of \(job.sampleTimes.count) frames")
+            .accessibilityValue("\(Int(job.memoryProgress * 100)) percent")
             if model.requiresRestart {
                 Text("Reopen Gremma to resume")
                     .font(.headline).foregroundStyle(Color(red: 1, green: 0.79, blue: 0.54))
                 Text("Swipe up from the bottom and pause, swipe Gremma up to close it, then open Gremma again. Your recording and saved progress will remain.")
                     .font(.callout).fixedSize(horizontal: false, vertical: true)
-                Text("You can still read printed text through Tools → Read, or search saved memories.")
+                Text("You can still ask about saved activities.")
                     .font(.callout).foregroundStyle(muted).fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Continue from the next frame. You don't need to record the room again.")
+                Text("Continue from the next unfinished segment. Your original recording is saved.")
                     .font(.callout).foregroundStyle(muted).fixedSize(horizontal: false, vertical: true)
             }
-            primaryButton("Resume at frame \(job.nextFrameIndex + 1)", symbol: "play.fill") {
+            primaryButton("Resume saved video", symbol: "play.fill") {
                 isTyping = false
                 app.resumeVideo(id: job.id)
             }
@@ -297,11 +295,36 @@ struct HomeView: View {
 
     private var toolLinks: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 20) { toolsButton; videosButton; memoriesButton }
-            VStack(alignment: .leading, spacing: 4) { toolsButton; videosButton; memoriesButton }
+            HStack(spacing: 20) { toolsButton; videosButton; activitiesButton }
+            VStack(alignment: .leading, spacing: 4) { toolsButton; videosButton; activitiesButton }
         }
         .font(.subheadline).foregroundStyle(muted)
         .disabled(app.isWorking)
+    }
+
+    private var activitiesButton: some View {
+        Button { pauseVoiceForSheet(); app.showActivityTimeline = true } label: {
+            Label("Timeline", systemImage: "clock.arrow.circlepath").frame(minHeight: 48)
+        }
+        .accessibilityValue("\(app.activities.count) saved activities")
+    }
+
+    private var medicineOverview: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Today's video logs", systemImage: "sun.max").font(.headline)
+                Spacer()
+                Button { pauseVoiceForSheet(); app.showReminders = true } label: {
+                    Image(systemName: "bell").frame(minWidth: 48, minHeight: 48)
+                }.accessibilityLabel("Medicine video-log reminders")
+            }
+            Text(app.morningMedicineLog).font(.callout).foregroundStyle(muted)
+            Text(app.eveningMedicineLog).font(.callout).foregroundStyle(muted)
+            Text("Reminder times: 9 AM and 9 PM · enable in reminders")
+                .font(.caption).foregroundStyle(accent)
+        }
+        .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 18))
     }
 
     private var videosButton: some View {
@@ -330,6 +353,15 @@ struct HomeView: View {
                 Text("Say the room name, or enter a name below.")
                     .foregroundStyle(muted).fixedSize(horizontal: false, vertical: true)
             }
+            if let job = app.videoJobs.first(where: { $0.id == app.pendingVideoID }), job.recordedAt == nil {
+                Text("This video's recording date is unknown. Set it before processing to include it in daily logs.")
+                    .font(.callout).foregroundStyle(.orange)
+                DatePicker("Recorded on", selection: $videoRecordingDate, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
+                Button("Use this recording date") {
+                    Task { do { try await app.setVideoDate(job, date: videoRecordingDate) }
+                           catch { app.error = error.localizedDescription } }
+                }.frame(minHeight: 48)
+            }
             TextField("Room or area name", text: $correctedVideoRoom)
                 .textFieldStyle(.roundedBorder).submitLabel(.done)
                 .accessibilityLabel("Correct room for this video")
@@ -355,8 +387,8 @@ struct HomeView: View {
         Button {
             pauseVoiceForSheet()
             showingTools = true
-        } label: { Label("Tools", systemImage: "square.grid.2x2").frame(minHeight: 48) }
-        .accessibilityHint("Open capture, reading, and imagination controls")
+        } label: { Label("More", systemImage: "ellipsis.circle").frame(minHeight: 48) }
+        .accessibilityHint("Record activities and manage reminders")
     }
 
     private var memoriesButton: some View {
@@ -405,20 +437,43 @@ struct HomeView: View {
                     .buttonStyle(.plain).accessibilityLabel("Stop Gremma and end voice session")
                 }
             }
-            Text(voiceCaption)
-                .font(.caption).foregroundStyle(muted).multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+            queryStats
         }
         .padding(.horizontal, 24).padding(.top, 16).padding(.bottom, 12)
         .background(canvas)
         .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.09)).frame(height: 1) }
     }
 
-    private var voiceCaption: String {
-        if dynamicTypeSize.isAccessibilitySize {
-            return app.voiceSessionEnabled ? "Voice session on" : "Tap Talk to begin."
-        }
-        return app.voiceSessionEnabled ? "Voice session on · listening pauses during replies" : "Tap Talk to begin. Allow microphone access the first time."
+    private var queryStats: some View {
+        let stats = app.queryPerformance
+        return VStack(spacing: 7) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6),
+                                    count: dynamicTypeSize.isAccessibilitySize ? 2 : 4), spacing: 10) {
+                metric("TPUT", value: stats?.tokensPerSecond.map { String(format: "%.1f tok/s", $0) } ?? "—",
+                       hint: "Native model decode throughput in tokens per second")
+                metric("TTFT", value: seconds(stats?.firstTokenSeconds), hint: "Time from question received to first answer text received")
+                metric("TPOT", value: stats?.timePerOutputTokenSeconds.map { String(format: "%.1f ms", $0 * 1_000) } ?? "—",
+                    hint: "Average time per output token after the first, using native token count and text arrival times")
+                metric("Answer", value: seconds(stats?.answerSeconds), hint: "Time from question received until the answer is ready")
+            }
+            Text(stats.map { $0.source == "Saved answer" ? "Saved answer · no model generation" : "Gemma E4B · timings from question received" } ?? "Response statistics appear here")
+                .font(.caption2).foregroundStyle(muted).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }.padding(.top, 5)
+    }
+
+    private func seconds(_ value: Double?) -> String {
+        value.map { String(format: "%.2f s", $0) } ?? "—"
+    }
+
+    private func metric(_ title: String, value: String, hint: String) -> some View {
+        VStack(spacing: 4) {
+            Text(title).font(.caption2).foregroundStyle(muted)
+            Text(value).font(.caption.monospacedDigit().weight(.semibold)).foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }.frame(maxWidth: .infinity)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(hint).accessibilityValue(value)
     }
 
     private var toolsSheet: some View {
@@ -427,17 +482,19 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     Text("Everything is a conversation away. These controls are here when you want them.")
                         .font(.body).foregroundStyle(muted)
-                    if dynamicTypeSize.isAccessibilitySize {
-                        VStack(spacing: 8) { modeButtons }
-                    } else {
-                        HStack(spacing: 8) { modeButtons }
-                    }
                     activePanel
+                    primaryButton("Local model settings", symbol: "slider.horizontal.3") {
+                        afterClosingTools { showingModels = true }
+                    }
+                    primaryButton("Activity timeline", symbol: "clock.arrow.circlepath") {
+                        afterClosingTools { app.showActivityTimeline = true }
+                    }
                     Toggle(isOn: $showingDeveloperStatus) {
                         Label("Show developer status", systemImage: "waveform.path.ecg")
                     }
                     .frame(minHeight: 48)
-                    .accessibilityHint("Shows live microphone, speech, and camera details on the conversation screen")
+                    .accessibilityHint("Shows microphone, speech, and camera details here")
+                    if showingDeveloperStatus { developerStatus }
                 }.padding(24)
             }
             .background(canvas.ignoresSafeArea())
@@ -451,7 +508,8 @@ struct HomeView: View {
             Label("Developer status", systemImage: "waveform.path.ecg")
                 .font(.caption.weight(.semibold)).foregroundStyle(accent)
             VStack(alignment: .leading, spacing: 6) {
-                Label(voice.isListening ? "Microphone: listening" : "Microphone: off", systemImage: voice.isListening ? "mic.fill" : "mic.slash")
+                Label(voice.isListening || cameraActivity.isMicrophoneRunning ? "Microphone: on" : "Microphone: off", systemImage: voice.isListening || cameraActivity.isMicrophoneRunning ? "mic.fill" : "mic.slash")
+                if let elapsed = app.lastLookupSeconds { Text("Saved-fact lookup: \(Int(elapsed * 1000)) ms · no model call") }
                 Label(voice.isSpeaking ? "Speech: speaking" : "Speech: idle", systemImage: "speaker.wave.2")
                 Label(cameraActivity.isRunning ? "Camera: running with live preview" : "Camera: off", systemImage: cameraActivity.isRunning ? "camera.fill" : "camera")
                 Text("Voice status: \(voice.status)")
@@ -481,21 +539,18 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 18) {
             switch app.mode {
             case .remember:
-                panelHeading("Remember where things are", subtitle: "Save a photo or room video. Find an item later with its original evidence.")
+                panelHeading("Your day, remembered", subtitle: "Record an activity. Ask what happened or where an item was last seen.")
                 TextField("Room name", text: $app.roomName).textFieldStyle(.roundedBorder).accessibilityLabel("Room name")
-                primaryButton("Remember a photo", symbol: "camera") { afterClosingTools { app.openCapture(purpose: .remember) } }
-                primaryButton("Record a room video", symbol: "video") { afterClosingTools { app.openVideo(record: true) } }
+                primaryButton("Record an activity", symbol: "video") { afterClosingTools { app.openVideo(record: true) } }
                 primaryButton("Import a recorded video", symbol: "square.and.arrow.down") { afterClosingTools { app.openVideo(record: false) } }
                 primaryButton("Manage saved videos", symbol: "film.stack") { afterClosingTools { app.openSavedVideos() } }
-                Menu {
-                    Button("Import a photo") { afterClosingTools { app.openCapture(purpose: .remember, library: true) } }
-                    Button("Describe a scene") { afterClosingTools { app.openCapture(purpose: .describe) } }
-                } label: { Label("More capture options", systemImage: "plus.circle").frame(minHeight: 48) }
+                primaryButton("Medicine video-log reminders", symbol: "bell") { afterClosingTools { app.showReminders = true } }
+                primaryButton("Earlier photo memories", symbol: "photo") { afterClosingTools { showingMemories = true } }
                 HStack {
                     TextField("Find my keys…", text: $app.query).submitLabel(.search)
-                        .onSubmit { afterClosingTools { app.findMemory() } }
+                        .onSubmit { afterClosingTools { app.recallActivity("Where are my " + app.query + "?") } }
                         .accessibilityLabel("Search saved memories")
-                    Button { afterClosingTools { app.findMemory() } } label: {
+                    Button { afterClosingTools { app.recallActivity("Where are my " + app.query + "?") } } label: {
                         Image(systemName: "magnifyingglass").frame(minWidth: 48, minHeight: 48)
                     }.accessibilityLabel("Search memories")
                 }.padding(.leading, 14).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
@@ -507,27 +562,6 @@ struct HomeView: View {
                             .font(.callout).foregroundStyle(muted).fixedSize(horizontal: false, vertical: true)
                     }
                 }
-            case .read:
-                panelHeading("Read the details", subtitle: "Hear printed text, medicine labels, expiry dates, or US currency. Unclear details stay unknown.")
-                Picker("What to read", selection: $app.readingMode) {
-                    ForEach(ReadingMode.allCases) { mode in Text(mode.title).tag(mode) }
-                }.pickerStyle(.menu).frame(minHeight: 48)
-                primaryButton("Read with camera", symbol: "text.viewfinder") { afterClosingTools { app.openCapture(purpose: .read) } }
-                Button("Choose an existing photo") { afterClosingTools { app.openCapture(purpose: .read, library: true) } }
-                    .frame(minHeight: 48)
-            case .imagine:
-                panelHeading("Picture the Taj Mahal", subtitle: "A guided description using verified facts saved on your iPhone.")
-                LandmarkIllustration().frame(height: 140).accessibilityHidden(true)
-                primaryButton("A short description", symbol: "sparkles") { afterClosingTools { app.imagine(short: true) } }
-                primaryButton("A detailed walkthrough", symbol: "text.alignleft") { afterClosingTools { app.imagine(short: false) } }
-                HStack {
-                    TextField("Ask about the Taj Mahal…", text: $app.query).submitLabel(.send)
-                        .onSubmit { afterClosingTools { app.imagine(question: app.query) } }
-                        .accessibilityLabel("Ask about the Taj Mahal")
-                    Button { afterClosingTools { app.imagine(question: app.query) } } label: {
-                        Image(systemName: "arrow.up").frame(minWidth: 48, minHeight: 48)
-                    }.accessibilityLabel("Send Taj Mahal question")
-                }.padding(.leading, 14).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
             }
         }.disabled(app.isWorking)
     }
@@ -581,27 +615,5 @@ struct HomeView: View {
         let action = pendingVideoAction
         pendingVideoAction = nil
         action?()
-    }
-}
-
-struct LandmarkIllustration: View {
-    var body: some View {
-        GeometryReader { geometry in
-            let w = geometry.size.width
-            Path { p in
-                p.move(to: CGPoint(x: w * 0.1, y: 123)); p.addLine(to: CGPoint(x: w * 0.9, y: 123))
-                p.addRect(CGRect(x: w * 0.32, y: 65, width: w * 0.36, height: 58))
-                p.move(to: CGPoint(x: w * 0.35, y: 65))
-                p.addCurve(to: CGPoint(x: w * 0.5, y: 20), control1: CGPoint(x: w * 0.3, y: 45), control2: CGPoint(x: w * 0.48, y: 34))
-                p.addCurve(to: CGPoint(x: w * 0.65, y: 65), control1: CGPoint(x: w * 0.52, y: 34), control2: CGPoint(x: w * 0.7, y: 45))
-                for x in [w * 0.2, w * 0.8] {
-                    p.addRect(CGRect(x: x - 6, y: 53, width: 12, height: 70))
-                    p.move(to: CGPoint(x: x - 10, y: 53)); p.addLine(to: CGPoint(x: x, y: 39)); p.addLine(to: CGPoint(x: x + 10, y: 53))
-                }
-                p.move(to: CGPoint(x: w * 0.44, y: 123)); p.addLine(to: CGPoint(x: w * 0.44, y: 93))
-                p.addQuadCurve(to: CGPoint(x: w * 0.56, y: 93), control: CGPoint(x: w * 0.5, y: 70))
-                p.addLine(to: CGPoint(x: w * 0.56, y: 123))
-            }.stroke(Color(red: 0.56, green: 0.91, blue: 0.81).opacity(0.65), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-        }
     }
 }

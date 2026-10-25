@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<link rel="icon" href="data:," />
+<title>Hackathon Plan — Offline Visual Assistant with Gemma</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f7f5f0; --panel:#ffffff; --panel2:#efede6; --ink:#141310; --ink2:#3d3b34; --muted:#6b675c;
+    --line:#d9d5c9; --amber:#b97e00; --amber-bg:#fff3d6; --amber-ink:#6b4a00;
+    --green:#1a6b3c; --green-bg:#e2f2e6; --red:#9e2b1e; --red-bg:#fbe7e3; --blue:#1d4f7a; --blue-bg:#e3eef7;
+    --black:#141310; --onblack:#f7f5f0; --onblack2:#c9c5b8;
+    --radius:14px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#121210; --panel:#1c1c19; --panel2:#24231f; --ink:#f2f0e9; --ink2:#d6d3c8; --muted:#a3a094;
+      --line:#34322b; --amber:#f2b01e; --amber-bg:#3a2f10; --amber-ink:#ffd970;
+      --green:#5ec785; --green-bg:#16301f; --red:#ff8a7a; --red-bg:#3a1d18; --blue:#7db9e8; --blue-bg:#182c3d;
+      --black:#f2f0e9; --onblack:#141310; --onblack2:#4a483f;
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",system-ui,-apple-system,sans-serif;font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace}
+  a{color:var(--blue);text-underline-offset:3px}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 20px 72px}
+
+  /* Verdict hero */
+  .verdict{background:var(--black);color:var(--onblack);margin:0 -20px;padding:34px 20px 30px;border-radius:0 0 20px 20px}
+  @media(min-width:700px){.verdict{margin:18px 0 0;padding:40px 36px 34px;border-radius:20px}}
+  .verdict .kicker{font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--onblack2);margin:0 0 10px}
+  .verdict h1{font-size:clamp(28px,5.4vw,46px);line-height:1.08;font-weight:800;letter-spacing:-.02em;margin:0 0 14px}
+  .verdict h1 em{font-style:normal;background:#f2b01e;color:#141310;padding:0 .18em;border-radius:4px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+  .verdict p.lede{font-size:17px;color:var(--onblack);max-width:44em;margin:0 0 18px}
+  .verdict p.lede b{color:#f2b01e}
+  .vgrid{display:grid;gap:10px;margin-top:20px}
+  @media(min-width:760px){.vgrid{grid-template-columns:1fr 1fr 1fr}}
+  .vbox{border:1px solid color-mix(in srgb, var(--onblack) 28%, transparent);border-radius:12px;padding:14px 16px}
+  .vbox h3{margin:0 0 4px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;font-family:"IBM Plex Mono",monospace}
+  .vbox p{margin:0;font-size:14.5px;color:var(--onblack)}
+  .vbox.no h3{color:#ff9d8f}.vbox.yes h3{color:#7ce3a1}.vbox.rescope h3{color:#f2b01e}
+
+  /* Nav */
+  nav.toc{position:sticky;top:0;z-index:20;background:color-mix(in srgb, var(--bg) 92%, transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);margin:0 -20px;padding:10px 20px;display:flex;gap:8px;flex-wrap:wrap}
+  nav.toc a{font-size:13.5px;font-weight:600;color:var(--ink2);text-decoration:none;border:1px solid var(--line);background:var(--panel);padding:6px 12px;border-radius:999px}
+  nav.toc a:focus-visible,nav.toc a:hover{border-color:var(--amber);color:var(--ink)}
+
+  section{margin-top:44px}
+  h2{font-size:clamp(23px,3.6vw,30px);font-weight:800;letter-spacing:-.015em;line-height:1.15;margin:0 0 8px}
+  h2 .no{font-family:"IBM Plex Mono",monospace;font-size:14px;color:var(--amber);display:block;letter-spacing:.12em;margin-bottom:6px}
+  .sub{color:var(--ink2);max-width:46em;margin:0 0 20px;font-size:16px}
+  h3{font-size:18px;font-weight:700;margin:24px 0 6px}
+  p{margin:0 0 12px}
+  ul{margin:0 0 12px;padding-left:20px} li{margin-bottom:6px}
+  .small{font-size:13.5px;color:var(--muted)}
+
+  /* Feature cards */
+  .feat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:14px}
+  .feat-head{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;justify-content:space-between;margin-bottom:8px}
+  .feat h3{margin:0;font-size:19px}
+  .feat .orig{color:var(--muted);font-size:14px;margin:0 0 10px}
+  .pill{font-family:"IBM Plex Mono",monospace;font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:5px 10px;border-radius:999px;white-space:nowrap}
+  .pill.keep{background:var(--green-bg);color:var(--green)}
+  .pill.cut{background:var(--red-bg);color:var(--red)}
+  .pill.rescope{background:var(--amber-bg);color:var(--amber-ink)}
+  .pill.v2{background:var(--blue-bg);color:var(--blue)}
+  .cols{display:grid;gap:14px}
+  @media(min-width:760px){.cols{grid-template-columns:1fr 1fr}}
+  .colbox{background:var(--panel2);border-radius:10px;padding:14px 16px}
+  .colbox h4{margin:0 0 6px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;font-family:"IBM Plex Mono",monospace;color:var(--ink2)}
+  .colbox p,.colbox li{font-size:14.5px}
+  .colbox ul{padding-left:18px;margin:0}.colbox p:last-child{margin-bottom:0}
+
+  /* Tables */
+  .tablewrap{overflow:visible}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;font-size:14.5px}
+  th,td{padding:11px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+  th{font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink2);background:var(--panel2)}
+  tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .hl{font-weight:700}
+  @media(max-width:640px){
+    table,thead,tbody,tr,td,th{display:block}
+    thead{display:none}
+    tr{border-bottom:1px solid var(--line);padding:8px 0}
+    td{border-bottom:none;padding:4px 14px}
+    td::before{content:attr(data-l);display:block;font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+    td.num{text-align:left}
+  }
+
+  .callout{border-radius:var(--radius);padding:18px 20px;margin:16px 0}
+  .callout.warn{background:var(--amber-bg);color:var(--amber-ink)}
+  .callout.bad{background:var(--red-bg);color:var(--red)}
+  .callout.good{background:var(--green-bg);color:var(--green)}
+  .callout p{margin:0;font-size:15px}
+  .callout p+p{margin-top:8px}
+  .callout b{font-weight:700}
+
+  /* Architecture tiers */
+  .tiers{display:grid;gap:10px}
+  @media(min-width:760px){.tiers{grid-template-columns:1fr 1fr 1fr}}
+  .tier{background:var(--panel);border:1px solid var(--line);border-top:5px solid var(--ink);border-radius:12px;padding:16px}
+  .tier.t0{border-top-color:#c22f1d}.tier.t1{border-top-color:#b97e00}.tier.t2{border-top-color:#1a6b3c}
+  .tier .freq{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted)}
+  .tier h3{margin:4px 0 6px;font-size:16.5px}
+  .tier p{font-size:14.5px;margin:0}
+
+  /* Timeline */
+  .timeline{list-style:none;margin:0;padding:0}
+  .timeline li{display:grid;grid-template-columns:86px 1fr;gap:14px;padding:13px 0;border-bottom:1px solid var(--line)}
+  .timeline li:last-child{border-bottom:none}
+  .timeline .t{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:14px;color:var(--amber);padding-top:2px}
+  .timeline b{display:block;font-size:16px}
+  .timeline span{font-size:14.5px;color:var(--ink2)}
+
+  .checklist{list-style:none;margin:0;padding:0}
+  .checklist li{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px 12px 44px;position:relative;margin-bottom:8px;font-size:15px}
+  .checklist li::before{content:"";position:absolute;left:16px;top:16px;width:14px;height:14px;border:2px solid var(--amber);border-radius:4px}
+  .checklist li b{font-weight:700}
+  .checklist li span{color:var(--ink2)}
+
+  .grid2{display:grid;gap:14px}
+  @media(min-width:760px){.grid2{grid-template-columns:1fr 1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px}
+  .card h3{margin-top:0}
+  .card ul{margin-bottom:0}
+
+  .sysbox{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 20px;margin:12px 0}
+  .sysbox p{font-family:"IBM Plex Mono",monospace;font-size:13.5px;line-height:1.55;margin:0 0 8px}
+  .sysbox p:last-child{margin-bottom:0}
+  .verbatim{background:var(--amber-bg);color:var(--amber-ink);border-radius:var(--radius);padding:16px 20px;font-size:15.5px;margin:12px 0}
+  .verbatim p{margin:0}
+  .verbatim .who{display:block;font-family:"IBM Plex Mono",monospace;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;opacity:.85}
+
+  details{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 20px;margin-bottom:10px}
+  summary{font-weight:700;cursor:pointer;font-size:16px}
+  details p,details li{font-size:14.5px}
+  details .srcs{margin-top:10px}
+
+  footer{margin-top:52px;border-top:1px solid var(--line);padding-top:18px}
+  footer p{font-size:13.5px;color:var(--muted)}
+  :focus-visible{outline:3px solid var(--amber);outline-offset:2px}
+  @media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- VERDICT -->
+  <div class="verdict">
+    <p class="kicker">Google Gemma Hardware Hackathon · Sat Oct 24 · AGI House · 10 AM–5 PM · Plan prepared Fri Oct 23</p>
+    <h1>The full 5-feature app won't run on a phone. A <em>smaller, sharper</em> one will — and can win.</h1>
+    <p class="lede"><b>The goal: win at least one prize.</b> This plan is built backwards from that. The realistic kit is your Mac + iPhone 16 Pro Max, plus a loaner Pixel 11 Pro expected at the venue for Android development and testing — and the build is sized to what those phones can actually run locally: Gemma answers questions about photos in seconds, but it is roughly <b>100× too slow to steer anyone around obstacles</b>, it cannot read iMessage or Mail on iOS, and Python can't be the main language. The headline differentiator is not a feature — it's the <b>safety/trust layer</b>: an app for blind users that says “I can't tell” instead of inventing an answer. Judges will probe exactly that, so the plan demos the refusal live.</p>
+    <div class="vgrid">
+      <div class="vbox yes"><h3>✓ Build tomorrow</h3><p>Voice-first scene narrator (Gemma 4 E2B, offline) + “Where are my keys?” object memory + reading mode: medicine labels, expiry dates, currency. Demo live on your iPhone, mirrored on the loaner Pixel if it arrives.</p></div>
+      <div class="vbox rescope"><h3>◐ Re-scope</h3><p>Navigation becomes <strong>hazard awareness</strong> — proximity alerts from depth + a 30&nbsp;ms detector, Gemma never in the per-frame safety loop, never turn-by-turn. Daily briefing becomes calendar + reminders only.</p></div>
+      <div class="vbox no"><h3>✕ Cut / don't claim</h3><p>Email &amp; message summaries on iOS (no API exists), indoor turn-by-turn guidance, always-on wake word, and “Python app for iPhone.” Claiming any of these loses credibility with judges.</p></div>
+    </div>
+  </div>
+
+  <nav class="toc" aria-label="Sections">
+    <a href="#features">Feature verdicts</a>
+    <a href="#safety">Safety &amp; trust layer</a>
+    <a href="#compute">Compute reality</a>
+    <a href="#delta">Your frame-delta idea</a>
+    <a href="#stack">Stack &amp; what you need</a>
+    <a href="#prizes">Prize strategy</a>
+    <a href="#team">Team brief — share this</a>
+    <a href="#day">The 7-hour build</a>
+    <a href="#missing">What you're missing</a>
+    <a href="#sources">Sources</a>
+  </nav>
+
+  <!-- FEATURES -->
+  <section id="features">
+    <h2><span class="no">01</span>Your five features, judged one by one</h2>
+    <p class="sub">Verdicts are for two different clocks: what can be <strong>demoed tomorrow in 7 hours</strong>, and what is honestly possible in a <strong>v2 product</strong>. “Impossible” below means platform-blocked, not just hard.</p>
+
+    <article class="feat">
+      <div class="feat-head"><h3>1 · Daily Updates — email, messages, calendar summary</h3><span class="pill rescope">Re-scope · Calendar only</span></div>
+      <p class="orig">Your version: read emails, messages and calendar events, speak a morning summary.</p>
+      <div class="cols">
+        <div class="colbox"><h4>Why not as pitched</h4>
+          <ul>
+            <li><strong>iOS: there is no API at all</strong> for Mail, iMessage or SMS. No permission you can request — a third-party app simply cannot read them. This is not a policy hurdle; the capability doesn't exist.</li>
+            <li><strong>Android Gmail</strong> needs restricted-scope OAuth verification plus an annual CASA security assessment — 6–12 weeks and real money. Not a hackathon, not even a month.</li>
+            <li><strong>Android SMS</strong>: Google Play only grants READ_SMS to apps that are the default SMS/phone/assistant handler. A vision app doesn't qualify.</li>
+          </ul>
+        </div>
+        <div class="colbox"><h4>What survives</h4>
+          <ul>
+            <li><strong>Calendar: yes, both platforms.</strong> iOS EventKit full-access permission and Android calendar APIs are legitimate. “Your day: 3 events, first at 10, a 40-minute gap before lunch” is buildable.</li>
+            <li>Add reminders, weather, and the app's own data — e.g. “Your keys were last seen on the kitchen counter yesterday.”</li>
+            <li>v2 route for email: user-forwarded mail or a connected Gmail account via a small server — which breaks the “everything on-device” promise, so say so honestly if you pitch it.</li>
+          </ul>
+        </div>
+      </div>
+    </article>
+
+    <article class="feat">
+      <div class="feat-head"><h3>2 · Navigation → hazard awareness — walking alerts, not turn-by-turn</h3><span class="pill rescope">Re-scope · Detector + depth, not Gemma</span></div>
+      <p class="orig">Your version: guide the user while walking, alert on obstacles and hazards. The re-scope you agreed to: this is <strong>hazard awareness</strong> — “something is ahead of you” — not navigation. No routes, no turn-by-turn, no steering.</p>
+      <div class="callout bad"><p><strong>Safety line you must not cross:</strong> at a normal walking pace of ~1.3&nbsp;m/s, a 2-second Gemma answer means the user travels ~2.6&nbsp;m past the hazard before hearing about it. Apple itself warns its own LiDAR Detection Mode “should not be relied on… for navigation.” Pitch this feature as <em>awareness assistance</em>, never as a replacement for a cane or guide dog — judges with accessibility experience will test exactly this.</p></div>
+      <div class="cols">
+        <div class="colbox"><h4>What actually works</h4>
+          <ul>
+            <li><strong>Depth first:</strong> iPhone 16 Pro Max LiDAR (effective ~5&nbsp;m) via ARKit gives “something 1.5&nbsp;m ahead” in milliseconds, 10×/sec, near-zero AI cost.</li>
+            <li><strong>Small detector second:</strong> MediaPipe object detection runs in ~28–30&nbsp;ms/frame — names the obstacle class (chair, person, bicycle).</li>
+            <li><strong>Gemma last, rarely:</strong> only when the user asks “what's in front of me?” or the scene changes completely.</li>
+          </ul>
+        </div>
+        <div class="colbox"><h4>Platform asymmetry</h4>
+          <ul>
+            <li>Pixel phones have <strong>no LiDAR/ToF</strong>. ARCore depth is motion-derived and fails when standing still or facing a plain wall — the exact moments that matter.</li>
+            <li>So walking alerts are an <strong>iPhone-Pro-first feature</strong>. On Pixel, limit claims to detector-based awareness.</li>
+            <li>Outdoor turn-by-turn is already solved by Maps with VoiceOver — don't rebuild it; integrate directions and add the “last 10 metres” awareness layer Maps lacks.</li>
+          </ul>
+        </div>
+      </div>
+    </article>
+
+    <article class="feat">
+      <div class="feat-head"><h3>3 · Record &amp; Find — home video → “Where is item X?”</h3><span class="pill keep">Keep · Your most original feature</span></div>
+      <p class="orig">Your version: record videos of the home, the model catalogues items and locations locally, later answers and guides the user to the item. Multiple videos processed in the background.</p>
+      <div class="cols">
+        <div class="colbox"><h4>Feasible — as memory, not navigation</h4>
+          <ul>
+            <li>Flow that works: user records a slow pan per room and <strong>says the room name aloud</strong> → sample 1 frame/sec → detector tags common objects at ~30&nbsp;ms/frame → Gemma captions only ambiguous frames → store item, room, counter/zone description, timestamp and the frame photo locally.</li>
+            <li>Search is cheap: EmbeddingGemma (308M, &lt;200&nbsp;MB RAM quantized) turns “blue mug” into a vector; sqlite-vec or ObjectBox retrieves it on-device. No LLM needed for lookup — Gemma only phrases the spoken answer.</li>
+            <li>Answer honestly in the form: <strong>“Last seen Tuesday 6:40 PM, kitchen, on the counter left of the sink.”</strong> Timestamps matter — objects move.</li>
+          </ul>
+        </div>
+        <div class="colbox"><h4>Where it breaks</h4>
+          <ul>
+            <li><strong>“Guide me to it from where I stand” — cut it.</strong> A phone alone can't locate itself indoors: Wi-Fi positioning is 3–15&nbsp;m off, BLE needs beacons, UWB needs anchors. No room identification, no indoor turn-by-turn without pre-installed infrastructure.</li>
+            <li><strong>Don't caption every frame with Gemma.</strong> 1 fps × a 3-minute scan at seconds-per-frame = many minutes of processing, heat and battery. Detector-first, Gemma-for-exceptions is ~100× cheaper.</li>
+            <li><strong>iOS background processing is limited</strong> and there is no background camera. Process on charge / while the app is open, and say “indexing” honestly in the UI.</li>
+          </ul>
+        </div>
+      </div>
+    </article>
+
+    <article class="feat">
+      <div class="feat-head"><h3>4 · Visualization — “Help me picture the Taj Mahal”</h3><span class="pill keep">Keep · Best demo on the day</span></div>
+      <p class="orig">Your version: detailed spoken descriptions of places, monuments and objects that build a mental picture — shape, scale, layout, materials.</p>
+      <div class="cols">
+        <div class="colbox"><h4>Why it wins</h4>
+          <ul>
+            <li>This is pure language-model work — Gemma's strength, no camera latency, no safety risk, works in airplane mode, and it's the feature Seeing AI / Be My AI do <em>least</em> well offline.</li>
+            <li>Prompt pattern that makes it good: <strong>anchor to the body and familiar objects</strong> — “about 17 storeys tall; the dome is wider than two buses end to end; walk from the gate and it grows in front of you in this order…” Structure: overall shape → scale → layout → materials → one memorable detail.</li>
+            <li>Follow-ups are free wins: “How big is the dome compared to a house?” Multi-turn conversation is where a local model beats a one-shot description app.</li>
+          </ul>
+        </div>
+        <div class="colbox"><h4>Guardrails</h4>
+          <ul>
+            <li>Gemma's built-in knowledge is good for famous landmarks, weak for niche/local places. Prompt it to <strong>say “I don't know this place well”</strong> rather than invent architecture — a hallucinated landmark description is the fastest way to lose an accessibility judge.</li>
+            <li>Offer two lengths by voice: “short version” (~20 seconds spoken) and “walk me through it” (layered, pausable).</li>
+          </ul>
+        </div>
+      </div>
+    </article>
+
+    <article class="feat">
+      <div class="feat-head"><h3>5 · Fully voice-driven experience</h3><span class="pill keep">Keep · With platform speech, not Gemma speech</span></div>
+      <p class="orig">Your version: every feature reachable by voice, no need to see the screen.</p>
+      <div class="cols">
+        <div class="colbox"><h4>Build it this way</h4>
+          <ul>
+            <li><strong>Commands:</strong> platform speech-to-text (Apple Speech / Android SpeechRecognizer, forced on-device mode). Near-instant, tiny battery cost. Reserve Gemma for understanding and answers.</li>
+            <li><strong>Output:</strong> AVSpeechSynthesizer / Android TTS — the same voices VoiceOver users already know and can set fast.</li>
+            <li><strong>Activation:</strong> one big push-to-talk surface + VoiceOver/TalkBack gestures + headphone button. Every screen also fully operable via VoiceOver rotor — voice-only must never mean touch-broken.</li>
+          </ul>
+        </div>
+        <div class="colbox"><h4>Cut</h4>
+          <ul>
+            <li><strong>Always-on wake word: cut.</strong> The low-power “Hey Siri / Hey Google” path (~milliwatts) is closed to third-party apps on iOS. In-app continuous listening means a permanent mic indicator, App Review scrutiny, and double-digit battery % per hour.</li>
+            <li>Don't run Whisper + Gemma E4B at the same time — together they pressure the 8&nbsp;GB RAM ceiling. Platform STT avoids the whole problem.</li>
+            <li>Apple's on-device recognizer caps sessions at ~1 minute — design for short commands and re-arm listening, don't fight it.</li>
+          </ul>
+        </div>
+      </div>
+    </article>
+
+    <article class="feat">
+      <div class="feat-head"><h3>6 · Reading — medicine labels, expiry dates, currency</h3><span class="pill keep">Keep · Easy Gemma win, huge daily value</span></div>
+      <p class="orig">New in this revision — promoted from a bullet to a full feature. Small scope, daily-life value, and the safest possible Gemma workload: one still photo, one short answer, no timing pressure.</p>
+      <div class="cols">
+        <div class="colbox"><h4>Build it this way</h4>
+          <ul>
+            <li><strong>OCR reads, Gemma interprets.</strong> Apple Vision / ML Kit extracts the exact printed text first (fast, on-device). Gemma never reads pixels for text — it works from the OCR result and structures the answer: medicine name, strength, the directions <em>as printed</em>, expiry date.</li>
+            <li><strong>Expiry is a parsing job:</strong> pull the date out of the label text and state it plainly — “Expires March 2027” — plus days remaining only if the date was read clearly.</li>
+            <li><strong>Currency:</strong> read the denomination exactly as printed on the note and say it back. Never convert, never estimate value, never guess a denomination from colour or size.</li>
+            <li>One photo per read, spoken back in a fixed order, with a “read it again” command. That's the whole feature — which is why it will actually work on the day.</li>
+          </ul>
+        </div>
+        <div class="colbox"><h4>The safety link — non-negotiable</h4>
+          <ul>
+            <li><strong>Medicine:</strong> the app reads the label exactly as printed and <strong>never advises</strong> whether a medicine is safe to take, what dose to take, or whether an expired item is still fine. The spoken line is: “That's what the label says — for advice on taking it, ask a pharmacist or doctor.”</li>
+            <li><strong>Blurry or partial text → refuse.</strong> “I can't read that clearly — try again closer, with more light.” A misread dosage or expiry date is the worst error this app can make; the refusal is the feature working, not failing.</li>
+            <li>This is the safety/trust layer (§02) at its most concrete — which is why the reading beat, including a deliberate blurry-label refusal, is in the demo script.</li>
+          </ul>
+        </div>
+      </div>
+    </article>
+
+    <h3>Add / discard — from the competitive research</h3>
+    <div class="grid2">
+      <div class="card"><h3>Add (cheap, differentiating)</h3>
+        <ul>
+          <li><strong>Haptic proximity:</strong> vibration intensity rises as an obstacle nears — silent, private, works in noise. Almost no code, huge demo effect.</li>
+          <li><strong>“I can't tell” as a feature:</strong> a tuned refusal prompt. Trust is the product for blind users; demo the refusal live. Full treatment in §02.</li>
+          <li><strong>Reading mode:</strong> now feature 6 above — medicine labels, expiry dates and currency, offline, with refusals. Signs and menus come free from the same OCR pipeline.</li>
+          <li><strong>Privacy as the pitch:</strong> home video never leaves the phone. Against Be My AI (cloud GPT-4) that's a real, checkable claim — airplane mode proves it.</li>
+        </ul>
+      </div>
+      <div class="card"><h3>Discard (already free &amp; built-in)</h3>
+        <ul>
+          <li>Door / people / furniture detection — Apple Magnifier Detection Mode does it free, on-device, with LiDAR.</li>
+          <li>Standalone colour ID — Seeing AI and Lookout already do it well, and it demos weakly. (Currency stays: it's part of reading mode, feature 6, because the denomination is <em>printed text</em> the OCR can read exactly — not a colour guess.)</li>
+          <li>Human-volunteer calling — that's Be My Eyes' network, not a buildable feature.</li>
+          <li>Your own maps / outdoor routing — integrate, don't rebuild.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- SAFETY -->
+  <section id="safety">
+    <h2><span class="no">02</span>The safety &amp; trust layer — your headline differentiator</h2>
+    <p class="sub">Every team at this hackathon will demo an AI that describes things. Almost none will demo an AI that <strong>refuses</strong>. For blind users, a confident wrong answer about a medicine label or an obstacle is worse than no answer — so the trust behaviour is designed, prompted, tested and scored like a feature, because it is one. Judges <em>will</em> ask “what happens when it's wrong?” — this section is the rehearsed answer.</p>
+
+    <h3>The system-prompt rules (paste-ready)</h3>
+    <p>These go into the narrator/reading system prompt verbatim, on both phones, and are never softened for a smoother demo:</p>
+    <div class="sysbox">
+      <p>1. NEVER estimate a distance from the camera image. Distances come only from the depth sensor. If no depth reading is provided, say you can't tell the distance.</p>
+      <p>2. NEVER read out text you cannot see clearly. If text is blurry, partial or cut off, say "I can't read that clearly" and say what would help (closer, more light, hold steady).</p>
+      <p>3. NEVER advise whether a medicine or food is safe to take or use. Read the label exactly as printed, then direct the user to a pharmacist or doctor for advice.</p>
+      <p>4. NEVER say a path is clear, a road is safe to cross, or an area is hazard-free. You may describe what you can see; absence of a detected obstacle is not proof of safety.</p>
+      <p>5. When you are unsure about anything, say "I can't tell" first, then give only what you are sure of, then say what would help you tell.</p>
+      <p>6. Describe only what is in front of the camera now. Do not invent objects, people, signs or details to complete a scene.</p>
+    </div>
+
+    <h3>The spoken disclaimer — exact words, said early</h3>
+    <p>Spoken once at first launch and again the first time hazard awareness is switched on in a session. Not buried in settings, not legalese:</p>
+    <div class="verbatim"><span class="who">App says, out loud</span><p>“Quick note before we start: I describe what the camera can see, and I can miss things. I'm not a replacement for your cane or guide dog. If I can't tell, I'll say so — please don't rely on me alone to stay safe.”</p></div>
+
+    <h3>Demo the refusal, and score it</h3>
+    <div class="cols">
+      <div class="colbox"><h4>The refusal is a demo beat</h4>
+        <p>At the 16:30 rehearsal (§08), the demo includes a deliberately blurry medicine label and one genuinely ambiguous scene. The expected, practised output is a refusal — “I can't read that clearly” — delivered as a success, not an apology. If Gemma guesses instead during rehearsal, fix the prompt before anything else.</p>
+      </div>
+      <div class="colbox"><h4>The trust scorecard</h4>
+        <p>Run 10 fixed test scenes before judging and record the split honestly: <strong>correct / incomplete / wrong / refused</strong>. Show the card on the pitch slide — e.g. “9 of 10 answered safely, 1 refusal, 0 invented.” A team that measures its own hallucinations is the rarest thing in the room, and it's what the LiteRT and accessibility judging rewards.</p>
+      </div>
+    </div>
+    <div class="callout warn"><p><strong>Say it unprompted in the pitch:</strong> “This assists awareness; it does not replace a cane, guide dog, or orientation training — and when it can't tell, it says so.” Thirty seconds of honesty up front disarms the hardest judging question instead of waiting to be caught by it.</p></div>
+  </section>
+
+  <!-- COMPUTE -->
+  <section id="compute">
+    <h2><span class="no">03</span>Compute reality — will the phones handle it?</h2>
+    <p class="sub">Short answer: <strong>yes for the re-scoped app, no for all five features running continuously.</strong> The constraint is not raw TOPS — it's RAM, heat, and seconds-per-answer. Device plan: your iPhone 16 Pro Max is the primary demo phone, and a <strong>loaner Pixel 11 Pro is expected at the venue</strong> (your update, Oct 23 — not yet confirmed on-site) for Android development and testing. The Pixel 11 series was announced Aug 12, 2026, so it's a legitimate target; the Pixel 10 Pro is the fallback most people actually own.</p>
+
+    <div class="tablewrap"><table>
+      <thead><tr><th>Device</th><th>Chip</th><th>RAM</th><th>AI accel.</th><th>Depth sensing</th><th>Verdict for this app</th></tr></thead>
+      <tbody>
+        <tr><td data-l="Device" class="hl">iPhone 16 Pro Max (yours)</td><td data-l="Chip">A18 Pro</td><td data-l="RAM" class="num">8 GB</td><td data-l="AI accel.">Neural Engine, 35 TOPS</td><td data-l="Depth">LiDAR, ~5 m</td><td data-l="Verdict"><strong>E2B = safe default.</strong> E4B peaks ~3.4 GB — runs, but with camera + TTS live it flirts with iOS killing the app. Demo E4B for quality, ship E2B.</td></tr>
+        <tr><td data-l="Device" class="hl">Pixel 11 Pro / XL — loaner expected</td><td data-l="Chip">Tensor G6</td><td data-l="RAM" class="num">12 GB base · 16 GB higher tiers</td><td data-l="AI accel.">TPU (Google doesn't publish TOPS)</td><td data-l="Depth">None — motion depth only</td><td data-l="Verdict"><strong>Best Android target.</strong> E4B is comfortable on a 16 GB unit and tight-but-workable on 12 GB — if the loaner is a 12 GB base model, default it to E2B like the iPhone. Hazard alerts weaker without LiDAR either way.</td></tr>
+        <tr><td data-l="Device" class="hl">Pixel 10 Pro / XL</td><td data-l="Chip">Tensor G5</td><td data-l="RAM" class="num">16 GB</td><td data-l="AI accel.">TPU, +60% vs G4 (claimed)</td><td data-l="Depth">None — motion depth only</td><td data-l="Verdict">Same story as Pixel 11, slightly slower. The realistic installed base.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Gemma models — sizes and measured speed</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Model</th><th>Download</th><th>Peak RAM</th><th>Decode speed</th><th>Sees / hears</th><th>Use it for</th></tr></thead>
+      <tbody>
+        <tr><td data-l="Model" class="hl">Gemma 4 E2B</td><td data-l="Download" class="num">2.58 GB</td><td data-l="Peak RAM" class="num">~0.7–1.5 GB</td><td data-l="Speed" class="num">~52 tok/s*</td><td data-l="Sees / hears">Image + audio, 128K ctx</td><td data-l="Use">Default engine: narration, visualisation, find queries.</td></tr>
+        <tr><td data-l="Model" class="hl">Gemma 4 E4B</td><td data-l="Download" class="num">3.65 GB</td><td data-l="Peak RAM" class="num">~3.4 GB</td><td data-l="Speed" class="num">~22–25 tok/s*</td><td data-l="Use">Image + audio, 128K ctx</td><td data-l="Use">Higher-quality answers on Pixel / plugged-in iPhone.</td></tr>
+        <tr><td data-l="Model" class="hl">Gemma 3n E2B / E4B</td><td data-l="Download" class="num">~2–3 GB class</td><td data-l="Peak RAM" class="num">~2–3 GB</td><td data-l="Speed" class="num">~13–16 tok/s</td><td data-l="Use">Image + video + audio</td><td data-l="Use">Documented fallback if Gemma 4 tooling fights you on the day.</td></tr>
+        <tr><td data-l="Model" class="hl">EmbeddingGemma 308M</td><td data-l="Download" class="num">&lt;200 MB RAM</td><td data-l="Peak RAM" class="num">—</td><td data-l="Speed" class="num">&lt;22 ms / query</td><td data-l="Use">Text embeddings</td><td data-l="Use">Record &amp; Find retrieval — the quiet workhorse.</td></tr>
+        <tr><td data-l="Model" class="hl">Gemma 3 1B</td><td data-l="Download" class="num">~0.6–1.0 GB</td><td data-l="Peak RAM" class="num">Low</td><td data-l="Speed" class="num">Fast</td><td data-l="Use"><strong>Text only — no vision</strong></td><td data-l="Use">Not usable for the camera features. A common trap.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small">* Google's official LiteRT-LM figures (Galaxy S26 Ultra / iPhone 17 Pro, GPU). Independent testing on the same hardware measured meaningfully lower (e.g. 37 vs 52 tok/s decode) — plan on the lower numbers. There is no official “photo + question → first word” figure; in practice a spoken 50–150-token answer takes roughly <strong>2–6 seconds total</strong>. Fine for “describe this,” disqualifying for steering.</p>
+
+    <div class="callout warn"><p><strong>Heat is your real budget.</strong> Measured on an iPhone 16 Pro under sustained local-LLM load: decode speed fell from ~40 to ~23 tok/s (−44%) as the phone heated, and 20 inference rounds cost ~10% battery. The Pixel side is the same story: under sustained load a Tensor chip typically holds only about 60–70% of its peak performance (estimate) — bursts stay fast, continuous inference does not. Translation: continuous inference all day is not a thing. Design for <strong>bursts</strong> — ask, answer, sleep — and demo with a cool phone, plugged in between judging rounds. Always-on inference runs in the ~15–20% battery/hour class.</p></div>
+
+    <div class="callout good"><p><strong>The good news:</strong> the re-scoped app's heavy parts are all cheap. Detection ~30 ms, depth ~free, embeddings ~22 ms, speech platform-native. Gemma — the only expensive piece — runs for a few seconds per user question. That workload fits both phones comfortably, offline, in airplane mode. Your compute worry is solved by architecture, not by a bigger phone.</p></div>
+  </section>
+
+  <!-- DELTA IDEA -->
+  <section id="delta">
+    <h2><span class="no">04</span>Your frame-delta idea — judged</h2>
+    <p class="sub">Your proposal: capture the scene once, then only process what changed in the next frame, instead of reprocessing everything. <strong>Verdict: the instinct is exactly right — it's how production systems work — but the unit of “delta” can't be Gemma tokens.</strong> Here's the version that works:</p>
+    <div class="tiers">
+      <div class="tier t0"><p class="freq">EVERY ~100 MS · ~FREE</p><h3>Tier 0 — Depth delta</h3><p>LiDAR/ARKit depth map each frame; subtract from the last. Something new within 3&nbsp;m → haptic pulse + beep pattern. No AI at all. This tier owns safety timing.</p></div>
+      <div class="tier t1"><p class="freq">~30 MS / FRAME · CHEAP</p><h3>Tier 1 — Detector delta</h3><p>MediaPipe detector tracks object boxes frame-to-frame. Only a <em>new, lost, or moved</em> object counts as change — a chair sliding into the path triggers an alert; the same chair sitting still never re-alerts. This is your delta idea, at the object level.</p></div>
+      <div class="tier t2"><p class="freq">SECONDS · ON DEMAND ONLY</p><h3>Tier 2 — Gemma delta</h3><p>Gemma runs when (a) the user asks, (b) Tier 1 sees a scene it can't classify, or (c) the overall scene embedding shifts enough to mean “new place.” It receives the <em>changed region crop</em>, not the full frame — smaller input, faster answer.</p></div>
+    </div>
+    <p style="margin-top:14px">Why not send Gemma “frame 1 description + what changed”? Because re-describing costs the same seconds whether the input is a delta or a frame, and a vision model given a cropped delta loses the context that makes its answer safe (“…on your left” needs the whole scene). Delta at the <strong>detector and depth layers</strong>, full-frame at the <strong>language layer, rarely</strong> — you get your efficiency idea and keep the answers trustworthy. Bonus: the same scene-change signal powers Record &amp; Find indexing (only index frames where something actually changed).</p>
+    <div class="callout warn"><p><strong>Name it correctly, every time:</strong> this three-tier system is <strong>hazard awareness</strong> — it notices new things near the user and says so. It is not navigation: no routes, no turn-by-turn, no steering decisions. And Gemma is <strong>never in the per-frame safety loop</strong> — Tiers 0 and 1 (depth + detector, milliseconds) own anything time-critical; Gemma only talks, on demand.</p></div>
+  </section>
+
+  <!-- STACK -->
+  <section id="stack">
+    <h2><span class="no">05</span>Stack — and the Python question, settled</h2>
+    <p class="sub"><strong>“Most code in Python, separate iPhone and Android apps” won't survive contact with the platforms.</strong> Chaquopy — the main Python-on-Android route — is Android-only by its own FAQ; iOS has no equivalent. Kivy draws its own non-native widgets, which destroys the VoiceOver/TalkBack accessibility tree — disqualifying for this exact app. BeeWare is native but too immature for camera, background audio and accessibility actions. Python keeps three honourable jobs: prototyping tonight, model conversion/fine-tuning on a laptop (LiteRT Torch), and any future server logic.</p>
+    <div class="grid2">
+      <div class="card"><h3>Ship stack (one codebase, two platforms)</h3>
+        <ul>
+          <li><strong>Flutter</strong> shell — one UI, both stores, strong accessibility semantics; native bridges where Flutter ends.</li>
+          <li><strong>LiteRT-LM</strong> for Gemma 4 (Kotlin stable; Swift is early-preview — budget friction on iOS, or run the iOS demo inside AI Edge Gallery).</li>
+          <li><strong>MediaPipe</strong> object detection + <strong>ARKit depth</strong> (iOS) / ARCore depth (Android).</li>
+          <li><strong>Apple Vision</strong> / ML Kit for OCR; platform STT/TTS; EventKit / Android Calendar.</li>
+          <li><strong>sqlite-vec or ObjectBox</strong> + EmbeddingGemma for the local item memory.</li>
+        </ul>
+      </div>
+      <div class="card"><h3>What you'll need on the day</h3>
+        <ul>
+          <li><strong>People (team of 3–4):</strong> you + the 2–3 friends you're already teaming with — role assignments are in the share-ready team brief (§07).</li>
+          <li><strong>Hardware:</strong> your iPhone 16 Pro Max (E4B + E2B pre-downloaded) · a Mac for iOS builds · the loaner Pixel 11 Pro expected at the venue for Android (fallback: a teammate's Pixel) · chargers + power banks. A borrowed Jetson kit only if a teammate wants the robotics angle — not needed for this build.</li>
+          <li><strong>Pre-downloaded tonight:</strong> Gemma 4 E2B + E4B in AI Edge Gallery, sample home-scan video, printed signs/menus for OCR tests.</li>
+          <li><strong>Test props:</strong> keys, mug, backpack placed around the venue for the live Find demo.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Fallback that de-risks everything</h3>
+    <p>If the custom app build stalls by hour 4, the demo still works: AI Edge Gallery already runs Gemma 4 fully offline on your iPhone with Ask Image and your tuned narrator system prompt. A polished Gallery-based demo with a working prompt, the Find prototype as a scripted flow, and an honest architecture beats a crashing custom app. Decide at the hour-4 checkpoint, not at hour 6.5.</p>
+  </section>
+
+  <!-- PRIZES -->
+  <section id="prizes">
+    <h2><span class="no">06</span>Prize strategy — playing to win at least one</h2>
+    <p class="sub">The goal is explicit: <strong>at least one prize.</strong> So the build is aimed at the tracks where this plan genuinely scores, in priority order — and the contingent ones are labelled contingent, so the team doesn't spend the day chasing a track whose precondition (the loaner Pixel) hasn't arrived yet.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Track</th><th>What it rewards</th><th>How this plan scores</th><th>What it demands on the day</th></tr></thead>
+      <tbody>
+        <tr><td data-l="Track" class="hl">Mobile AI (iPhone + Android)</td><td data-l="Rewards">A real on-device AI app experience on phones people carry</td><td data-l="Scores"><strong>Primary target.</strong> The iPhone demo works with zero contingencies; the Pixel mirror strengthens it but isn't load-bearing.</td><td data-l="Demands">Polished voice-first flow on the iPhone; Android running if the loaner arrives.</td></tr>
+        <tr><td data-l="Track" class="hl">Best Use of LiteRT</td><td data-l="Rewards">Serious, well-engineered use of the LiteRT / LiteRT-LM stack</td><td data-l="Scores"><strong>Strong.</strong> Two-model design (Gemma 4 + EmbeddingGemma), tiered inference, delta gating, and a measured trust scorecard (§02) — engineering substance, not a wrapper.</td><td data-l="Demands">Be able to explain the tiers and show the numbers: model sizes, tok/s, when Gemma runs and when it deliberately doesn't.</td></tr>
+        <tr><td data-l="Track" class="hl">Accessibility</td><td data-l="Rewards">Real value for disabled users, handled responsibly</td><td data-l="Scores"><strong>Strong — if the safety layer leads.</strong> The refusal behaviour, spoken disclaimer and hazard-awareness honesty are exactly what separates a responsible entry from a reckless one.</td><td data-l="Demands">Demo the refusal live; never claim navigation or cane replacement; correct language (“blind and low-vision users”).</td></tr>
+        <tr><td data-l="Track" class="hl">Best in Show — Pixel-only, full Android + Pixel end-to-end</td><td data-l="Rewards">The complete story running end-to-end on Pixel hardware</td><td data-l="Scores"><strong>Contingent.</strong> Scores only if the loaner Pixel 11 Pro actually arrives <em>and</em> the full Android story runs on it end-to-end. Until both are true, treat it as a bonus, not the plan.</td><td data-l="Demands">Confirm the loaner in the first 30 minutes. If it's there: Android dev's whole day goes to the Pixel build. If not: drop this track without regret and double down on the three above.</td></tr>
+      </tbody>
+    </table></div>
+    <h3>The honest prize read</h3>
+    <p>Four things separate this entry from the field, and all four are already in the plan: <strong>(1) the airplane-mode proof</strong> — fully offline, demonstrated visibly, against cloud-based incumbents like Be My AI; <strong>(2) safety refusals, live</strong> — the blurry-label “I can't tell” beat (§02); <strong>(3) a recorded trust scorecard</strong> — measured honesty beats claimed accuracy; <strong>(4) Record &amp; Find</strong> — personal spatial memory that nobody else offers offline. The fallback protects all four: if the custom build stalls, AI Edge Gallery + the rehearsed prompts still demos every differentiator. A smooth Gallery demo wins prizes; a crashing custom app wins none.</p>
+  </section>
+
+  <!-- TEAM BRIEF -->
+  <section id="team">
+    <h2><span class="no">07</span>Team brief — share this section with the team</h2>
+    <p class="sub">Self-contained: what we're building, who does what, what hardware we have, and what to sort tonight. Forward just this section to the 2–3 friends you're teaming with.</p>
+
+    <div class="verbatim"><span class="who">The pitch — anyone on the team can say this</span><p>“We're building an offline visual assistant for blind and low-vision users. Gemma 4 runs entirely on the phone — no cloud, so a user's home video never leaves their hand. It narrates scenes, remembers where your things were last seen, reads medicine labels, expiry dates and currency — and when it can't tell, it says so instead of guessing. Sensors handle anything time-critical; Gemma only talks. We're aiming at Mobile AI, Best Use of LiteRT and Accessibility, with Best in Show in reach if the loaner Pixel lands.”</p></div>
+
+    <h3>Roles — 3–4 people</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Slot</th><th>Owns</th><th>First task tomorrow</th></tr></thead>
+      <tbody>
+        <tr><td data-l="Slot" class="hl">Ajj — product &amp; demo</td><td data-l="Owns">Scope and cut decisions, the pitch, the live demo, iPhone test rig</td><td data-l="First task">Confirm the loaner Pixel at check-in; lock scope at 10:00</td></tr>
+        <tr><td data-l="Slot" class="hl">Teammate — Android (name: ______)</td><td data-l="Owns">Kotlin/Flutter Android build on the loaner Pixel 11 Pro</td><td data-l="First task">Get Gemma 4 E2B answering in AI Edge Gallery / LiteRT-LM on the Pixel</td></tr>
+        <tr><td data-l="Slot" class="hl">Teammate — iOS (name: ______)</td><td data-l="Owns">Swift/iOS build, Mac + Xcode, VoiceOver pass</td><td data-l="First task">Camera → Gemma → TTS loop on the iPhone</td></tr>
+        <tr><td data-l="Slot" class="hl">Teammate — ML &amp; eval (name: ______, if we're 4)</td><td data-l="Owns">Prompts (incl. the §02 safety rules), Record &amp; Find indexing, the 10-scene trust scorecard, demo props</td><td data-l="First task">Tune the narrator prompt; stage the 5 planted Find items</td></tr>
+      </tbody>
+    </table></div>
+    <p class="small">If we're 3, not 4: Ajj absorbs prompts/eval between demo rehearsals, and Record &amp; Find shrinks to the scripted 5-item flow. Nothing else changes.</p>
+
+    <h3>Device matrix</h3>
+    <ul>
+      <li><strong>iPhone 16 Pro Max</strong> — Ajj's, confirmed. Primary demo phone; E2B + E4B pre-downloaded tonight.</li>
+      <li><strong>Mac with Xcode</strong> — required for any iOS build. Assign tonight: whose Mac, is Xcode updated?</li>
+      <li><strong>Loaner Pixel 11 Pro</strong> — expected at the venue, <em>unconfirmed</em>. Confirm in the first 30 minutes tomorrow. If it's a 12 GB base unit, it runs E2B by default (§03).</li>
+      <li><strong>If the loaner doesn't materialise:</strong> any teammate's Pixel (10 Pro is fine) for the Android story; failing that, the demo runs iPhone-led and we target Mobile AI / LiteRT / Accessibility — Best in Show (Pixel-only) is dropped, by design, not by accident.</li>
+    </ul>
+
+    <h3>Sort tonight, before the venue</h3>
+    <ul class="checklist">
+      <li><b>Models pre-downloaded</b> <span>on the iPhone (E2B + E4B in AI Edge Gallery) and ready to sideload onto the Pixel — venue Wi-Fi is not a build plan.</span></li>
+      <li><b>Mac confirmed</b> <span>— owner named, Xcode + Flutter/Android Studio installed and opened once.</span></li>
+      <li><b>Props packed:</b> <span>keys, mug, backpack for Record &amp; Find; printed medicine label and expiry-date samples for the reading demo — including one deliberately blurry label for the refusal beat.</span></li>
+      <li><b>Power:</b> <span>chargers + power bank per phone; phones charged and cool for judging rounds.</span></li>
+      <li><b>Everyone has read §02</b> <span>— the safety rules and the spoken disclaimer are the pitch, not fine print.</span></li>
+    </ul>
+  </section>
+
+  <!-- DAY PLAN -->
+  <section id="day">
+    <h2><span class="no">08</span>The 7-hour build — Sat Oct 24, 10 AM–5 PM</h2>
+    <p class="sub">Science-fair judging: the demo is the product. Every hour below ends with something demonstrable.</p>
+    <ol class="timeline">
+      <li><span class="t">10:00</span><div><b>Team up, assign roles &amp; lock scope</b><span>Assign the §07 roles by name (product/demo, Android, iOS, ML/eval). First errand: confirm whether the loaner Pixel 11 Pro exists — that decides if Best in Show is in play (§06). Pitch: “Offline narrator + object memory + reading mode for blind users, Gemma 4 on-device.” Write the cut list on a whiteboard — it impresses judges later.</span></div></li>
+      <li><span class="t">11:00</span><div><b>Narrator core working</b><span>Camera frame → Gemma 4 E2B with the safety-first system prompt → TTS. Tune temperature ~0.2–0.4. Test the 5 scenes: clutter, printed text, doorway, dim light, one ambiguous scene (must say “I can't tell”).</span></div></li>
+      <li><span class="t">12:30</span><div><b>Visualisation mode</b><span>“Picture this” prompt template (shape → scale → layout → materials → detail) + short/long spoken versions. Test on Taj Mahal and one object in the room.</span></div></li>
+      <li><span class="t">13:30</span><div><b>Record &amp; Find prototype</b><span>60-second venue scan with spoken room label; detector + caption pass; store 5 planted items. Voice query: “Where are my keys?” → spoken last-seen answer with time.</span></div></li>
+      <li><span class="t">14:15</span><div><b>Reading mode</b><span>OCR (Vision/ML Kit) → Gemma structures the answer: medicine name + directions as printed, expiry date, currency denomination. Test on the printed samples — then on the deliberately blurry label, which must produce the §02 refusal, not a guess.</span></div></li>
+      <li><span class="t">15:00</span><div><b>Hazard awareness tier + haptics</b><span>Depth-based “object ahead” alert with rising vibration. Walk-test it in the corridor. If it's flaky, cut it from the live demo and show the video — never demo flaky safety features live.</span></div></li>
+      <li><span class="t">16:00</span><div><b>Checkpoint: app or Gallery?</b><span>Custom app stable → polish it. Not stable → switch the demo to AI Edge Gallery + your prompts and spend the hour rehearsing. Freeze features either way.</span></div></li>
+      <li><span class="t">16:30</span><div><b>Rehearse the 90-second demo</b><span>1) Airplane mode ON, visibly. 2) Spoken disclaimer (§02), 10 seconds. 3) Cluttered scene → safety-first narration. 4) <strong>Reading beat:</strong> medicine label → name, directions as printed, expiry date; then the blurry label → “I can't read that clearly” refusal. 5) “Where are my keys?” → last-seen answer. 6) “Picture the Taj Mahal.” 7) Close with the scorecard: “10 scenes tested — here's our correct / refused split. Gemma 4, on this phone, no cloud.” Cool phone, full battery, props placed.</span></div></li>
+    </ol>
+  </section>
+
+  <!-- MISSING -->
+  <section id="missing">
+    <h2><span class="no">09</span>What you're missing</h2>
+    <p class="sub">Gaps in the original brief — none fatal, all cheap to close now and expensive to discover at judging. The safety items that used to live here now have their own full section (§02); they're listed as one-line reminders so nothing else in this list gets lost.</p>
+    <ul class="checklist">
+      <li><b>A blind user in the loop.</b> <span>Even one 20-minute call with a VoiceOver user before building beats any assumption. At minimum, test your own flows blindfolded with VoiceOver on, and never use the phrase “for the blind” in the pitch — “for blind and low-vision users.”</span></li>
+      <li><b>Safety stance, hallucination budget, evaluation</b> <span>→ covered in full in §02: the rehearsed disclaimer line, the never-guess rules in the system prompt, the refusal demo beat, and the 10-scene trust scorecard. Don't duplicate them here — rehearse them there.</span></li>
+      <li><b>Privacy story for home video.</b> <span>Recording someone's home is the most sensitive data class there is. On-device-only storage, a spoken “delete everything” command, and no cloud backup — make these features, not footnotes. It's also your sharpest edge over Be My AI.</span></li>
+      <li><b>Battery &amp; heat plan.</b> <span>Burst inference, index-on-charge, E2B default. A narrator that kills the phone by noon is worse than none — say the design choices out loud in the pitch.</span></li>
+    </ul>
+
+    <h3>The one-sentence version, if you remember nothing else</h3>
+    <div class="callout good"><p>Build <strong>an offline conversation about what the camera sees, plus a memory of where your things were last seen</strong> — let sensors do the fast safety work, let Gemma do the talking, and let everything else be the roadmap.</p></div>
+  </section>
+
+  <!-- SOURCES -->
+  <section id="sources">
+    <h2><span class="no">10</span>Sources &amp; further reading</h2>
+    <p class="sub">Key claims above trace to these. Speeds marked official are Google's published LiteRT-LM benchmarks; treat them as best-case (GPU, cool device) per the independent checks noted in §03.</p>
+    <details>
+      <summary>Model &amp; runtime sources</summary>
+      <ul class="srcs">
+        <li><a href="https://developers.google.com/edge/litert-lm/models/gemma-4">LiteRT-LM — Gemma 4 model &amp; benchmark table (Google)</a></li>
+        <li><a href="https://github.com/google-ai-edge/LiteRT-LM">LiteRT-LM on GitHub — platform support status (Swift = early preview)</a></li>
+        <li><a href="https://developers.googleblog.com/en/introducing-gemma-3n-developer-guide/">Gemma 3n developer guide (Google Developers Blog)</a></li>
+        <li><a href="https://ai.google.dev/gemma/docs/embeddinggemma">EmbeddingGemma documentation (Google AI)</a></li>
+        <li><a href="https://developers.google.com/edge/mediapipe/solutions/vision/object_detector">MediaPipe object detector — latency benchmarks (Google)</a></li>
+      </ul>
+    </details>
+    <details>
+      <summary>Platform-limit sources</summary>
+      <ul class="srcs">
+        <li><a href="https://support.apple.com/guide/iphone/detect-doors-people-and-furniture-around-you-iph35c335575/ios">Apple — Detection Mode, incl. “should not be relied on for navigation”</a></li>
+        <li><a href="https://developers.google.com/ar/develop/java/depth/raw-depth">ARCore raw depth — motion-derived depth limits (Google)</a></li>
+        <li><a href="https://chaquo.com/chaquopy/doc/current/faq.html">Chaquopy FAQ — “Does Chaquopy support iOS? Not at the moment.”</a></li>
+        <li><a href="https://support.google.com/googleplay/android-developer/answer/16909972">Google Play — SMS/Call Log permission policy (default-handler rule)</a></li>
+      </ul>
+    </details>
+    <details>
+      <summary>Hardware sources</summary>
+      <ul class="srcs">
+        <li><a href="https://m.gsmarena.com:443/google_pixel_11_pro-14801.php">Pixel 11 Pro full specifications — Tensor G6, 12 GB / 16 GB RAM tiers (GSMArena)</a></li>
+      </ul>
+    </details>
+    <details>
+      <summary>Prior art</summary>
+      <ul class="srcs">
+        <li><a href="https://blog.google/company-news/outreach-and-initiatives/accessibility/lookout-app-help-blind-and-visually-impaired-people-learn-about-their-surroundings/">Google — Lookout (on-device / offline core)</a></li>
+      </ul>
+      <p>Full research notes with per-claim citations were compiled for this plan on Oct 23, 2026, including measured thermal-throttling data for sustained on-device LLM inference on iPhone 16 Pro. Hardware figures for the Pixel 11 series reflect its Aug 2026 announcement; iPhone RAM figures are teardown-derived (Apple doesn't publish RAM).</p>
+    </details>
+  </section>
+
+  <footer>
+    <p>Prepared for Ajj · Google Gemma Hardware Hackathon, AGI House, Hillsborough · Sat Oct 24, 2026. This page is a working plan for the event and can be removed afterwards. Product names (Gemma, LiteRT, Seeing AI, Be My Eyes, Lookout) belong to their owners; benchmark figures are as published by their sources on Oct 23, 2026.</p>
+  </footer>
+</div>
+</body>
+</html>

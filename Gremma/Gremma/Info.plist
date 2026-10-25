@@ -11,10 +11,12 @@
 <key>LSRequiresIPhoneOS</key><true/>
 <key>UILaunchScreen</key><dict/>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
-<key>NSCameraUsageDescription</key><string>Gremma uses your camera to read text and remember what you choose to capture. Processing stays on this iPhone.</string>
-<key>NSMicrophoneUsageDescription</key><string>Gremma uses your microphone for spoken commands and room recordings.</string>
-<key>NSSpeechRecognitionUsageDescription</key><string>Gremma recognizes English commands using on-device speech recognition.</string>
-<key>NSPhotoLibraryUsageDescription</key><string>Choose a photo or room video to process on your iPhone.</string>
+<key>NSCameraUsageDescription</key><string>Gremma records the activities you choose to remember. Processing stays on this iPhone.</string>
+<key>NSMicrophoneUsageDescription</key><string>Gremma uses your microphone for spoken requests. Activity videos are recorded without audio.</string>
+<key>NSSpeechRecognitionUsageDescription</key><string>Gremma recognizes your English spoken requests on this iPhone.</string>
+<key>NSPhotoLibraryUsageDescription</key><string>Choose an activity video to remember on your iPhone.</string>
+<key>NSLocalNetworkUsageDescription</key><string>When you enable the video receiver, Gremma accepts activity videos from your Arduino VENTUNO Q on your private Wi-Fi network.</string>
+<key>NSBonjourServices</key><array><string>_gremma-video._tcp</string></array>
 <key>UIFileSharingEnabled</key><true/>
 <key>LSSupportsOpeningDocumentsInPlace</key><true/>
 <key>UIApplicationSupportsIndirectInputEvents</key><true/>

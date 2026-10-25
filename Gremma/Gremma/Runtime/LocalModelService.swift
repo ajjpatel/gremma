@@ -2,14 +2,6 @@ import Combine
 import Foundation
 import LiteRTLM
 
-struct InferenceMetrics: Sendable {
-    /// Wall time, including conversation creation and image prefill.
-    let elapsedSeconds: TimeInterval
-    let firstTextSeconds: TimeInterval?
-    let characterCount: Int
-    let cancelled: Bool
-}
-
 @MainActor
 final class LocalModelService: ObservableObject {
     @Published private(set) var status = "Import a Gemma .litertlm model to begin."
@@ -110,7 +102,7 @@ final class LocalModelService: ObservableObject {
     }
 
     func selectModel(_ url: URL) {
-        guard !requiresRestart, !isBusy, models.contains(where: { $0.url == url && $0.kind == .chat }) else { return }
+        guard !requiresRestart, !isBusy, Self.isE4B(url), models.contains(where: { $0.url == url && $0.kind == .chat }) else { return }
         guard selectedModelURL != url else { return }
         retireEngineReference()
         loadedModelURL = nil
@@ -133,6 +125,7 @@ final class LocalModelService: ObservableObject {
               let model = models.first(where: { $0.url == url && $0.kind == .chat }) else {
             throw LocalModelError.noChatModel
         }
+        guard Self.isE4B(url) else { throw LocalModelError.invalidFile("Gremma uses Gemma E4B. Import or select the E4B model.") }
         if engine != nil, loadedModelURL == url, loadedWithGPU == useGPU, isReady { return }
         isLoading = true
         isReady = false
@@ -168,6 +161,8 @@ final class LocalModelService: ObservableObject {
                 backend: gpu ? .gpu : .cpu(threadCount: 4),
                 visionBackend: model.supportsVision ? .cpu(threadCount: 2) : nil,
                 maxNumTokens: contextLimit, cacheDir: cache.path)
+            ExperimentalFlags.optIntoExperimentalAPIs()
+            ExperimentalFlags.enableBenchmark = true
             let candidate = Engine(engineConfig: config)
             let worker = Task.detached(priority: .userInitiated) { try await candidate.initialize() }
             let gate = RuntimeDeadlineGate<Void>(maximumDuration: 90, cancellationGrace: 4)
@@ -234,8 +229,16 @@ final class LocalModelService: ObservableObject {
 
     func generate(prompt: String, system: String, imageURL: URL? = nil,
                   history: [ConversationTurn] = []) async throws -> String {
-        try await performGeneration(prompt: prompt, system: system, imageURL: imageURL,
+        try await performGeneration(prompt: prompt, system: system, imageURLs: imageURL.map { [$0] } ?? [],
             jsonSchema: nil, maxOutputTokens: 512, history: history)
+    }
+
+    /// A bounded chronological sequence for action understanding, using one E4B request.
+    func generate(prompt: String, system: String, imageURLs: [URL],
+                  maxOutputTokens: Int = 256) async throws -> String {
+        guard (1...1024).contains(maxOutputTokens) else { throw LocalModelError.invalidOutputLimit }
+        return try await performGeneration(prompt: prompt, system: system, imageURLs: imageURLs,
+            jsonSchema: nil, maxOutputTokens: maxOutputTokens, history: [])
     }
 
     /// Opt-in native LLGuidance JSON-schema constrained decoding. The SDK can still
@@ -249,11 +252,11 @@ final class LocalModelService: ObservableObject {
             throw LocalModelError.invalidJSONSchema
         }
         guard (1...1024).contains(maxOutputTokens) else { throw LocalModelError.invalidOutputLimit }
-        return try await performGeneration(prompt: prompt, system: system, imageURL: imageURL,
+        return try await performGeneration(prompt: prompt, system: system, imageURLs: imageURL.map { [$0] } ?? [],
             jsonSchema: schema, maxOutputTokens: maxOutputTokens, history: history)
     }
 
-    private func performGeneration(prompt: String, system: String, imageURL: URL?,
+    private func performGeneration(prompt: String, system: String, imageURLs: [URL],
                                    jsonSchema: String?, maxOutputTokens: Int,
                                    history: [ConversationTurn]) async throws -> String {
         guard !requiresRestart else { throw RuntimeRecoveryError.restartRequired }
@@ -266,7 +269,8 @@ final class LocalModelService: ObservableObject {
               let model = models.first(where: { $0.url == loadedModelURL }) else {
             throw LocalModelError.noChatModel
         }
-        if let imageURL {
+        guard imageURLs.count <= 6 else { throw LocalModelError.invalidFile("Use at most six ordered video frames per request.") }
+        for imageURL in imageURLs {
             guard model.supportsVision else { throw LocalModelError.visionUnavailable }
             guard imageURL.isFileURL, FileManager.default.isReadableFile(atPath: imageURL.path) else {
                 throw LocalModelError.invalidFile("The captured image is no longer available. Please capture it again.")
@@ -276,6 +280,7 @@ final class LocalModelService: ObservableObject {
         let control = GenerationControl()
         let gate = RuntimeDeadlineGate<String>(maximumDuration: 90, noProgressDuration: 45, cancellationGrace: 4)
         let start = Date()
+        let startedUptime = ProcessInfo.processInfo.systemUptime
         generationID = id
         generationControl = control
         activeWaitCancellation = { gate.requestCancellation() }
@@ -285,28 +290,32 @@ final class LocalModelService: ObservableObject {
         lastError = nil
         lastGenerationDiagnostics = InferenceDiagnostics(requestID: id, startedAt: start,
             constrainedJSON: jsonSchema != nil, promptCharacterCount: prompt.count,
-            systemCharacterCount: system.count, includesImage: imageURL != nil,
+            systemCharacterCount: system.count, includesImage: !imageURLs.isEmpty,
             historyTurnCount: history.count, historyCharacterCount: history.reduce(0) { $0 + $1.text.count },
             schemaByteCount: jsonSchema?.utf8.count ?? 0, contextTokenLimit: loadedContextTokenLimit,
             maximumOutputTokens: maxOutputTokens)
-        status = imageURL == nil ? "Thinking locally…" : "Looking at the image locally…"
-        _ = beginRuntimeOperation(kind: imageURL == nil ? "text_generation" : "vision_generation",
+        status = imageURLs.isEmpty ? "Thinking locally…" : "Looking at the image locally…"
+        _ = beginRuntimeOperation(kind: imageURLs.isEmpty ? "text_generation" : "vision_generation",
                                   phase: "creating_conversation", id: id)
         // This copy belongs to the uncancelled worker, not the caller's withImage
         // scope, which may end after a deadline while native prefill is still alive.
-        let retainedImageURL: URL?
-        if let imageURL {
-            let destination = FileManager.default.temporaryDirectory.appendingPathComponent("gremma-runtime-\(id.uuidString).jpg")
-            do { try FileManager.default.copyItem(at: imageURL, to: destination); retainedImageURL = destination }
-            catch {
-                generationID = nil; generationControl = nil; activeWaitCancellation = nil; isGenerating = false
-                recordRuntimeFailure(error, id: id); finishRuntimeOperation(id: id)
-                record(error)
-                throw error
+        var copiedImages: [URL] = []
+        do {
+            for (index, imageURL) in imageURLs.enumerated() {
+                let destination = FileManager.default.temporaryDirectory.appendingPathComponent("gremma-runtime-\(id.uuidString)-\(index).jpg")
+                try FileManager.default.copyItem(at: imageURL, to: destination)
+                copiedImages.append(destination)
             }
-        } else { retainedImageURL = nil }
+        } catch {
+            for url in copiedImages { try? FileManager.default.removeItem(at: url) }
+            generationID = nil; generationControl = nil; activeWaitCancellation = nil; isGenerating = false
+            recordRuntimeFailure(error, id: id); finishRuntimeOperation(id: id)
+            record(error)
+            throw error
+        }
+        let retainedImageURLs = copiedImages
         let task = Task.detached(priority: .userInitiated) { [weak self] () throws -> String in
-            defer { if let retainedImageURL { try? FileManager.default.removeItem(at: retainedImageURL) } }
+            defer { for url in retainedImageURLs { try? FileManager.default.removeItem(at: url) } }
             let nativeWork: () async throws -> String = {
             let responseFormat = try jsonSchema.map { try ResponseFormat.json(schema: $0) }
             let sampler = try SamplerConfig(topK: 40, topP: 0.9, temperature: 0.2)
@@ -327,7 +336,12 @@ final class LocalModelService: ObservableObject {
             gate.noteProgress()
             await self?.setGenerationPhase("streaming", id: id)
             var contents: [Content] = []
-            if let retainedImageURL { contents.append(.imageFile(retainedImageURL.path)) }
+            for (index, url) in retainedImageURLs.enumerated() {
+                // The caller defines timing and roles. A request may contain a
+                // scene-context image followed by chronological detail crops.
+                contents.append(.text("Image \(index + 1):"))
+                contents.append(.imageFile(url.path))
+            }
             contents.append(.text(prompt))
             let stream = conversation.sendMessageStream(Message(contents: contents), maxOutputTokens: maxOutputTokens,
                 thinkingConfig: ThinkingConfig(enableThinking: false), responseFormat: responseFormat)
@@ -335,6 +349,7 @@ final class LocalModelService: ObservableObject {
             if control.isCancelled { control.requestCancellation() }
             var text = ""
             var firstText: TimeInterval?
+            var lastText: TimeInterval?
             do {
                 for try await chunk in stream {
                     gate.noteProgress()
@@ -349,8 +364,9 @@ final class LocalModelService: ObservableObject {
                     let delta = responseFormat == nil ? chunk.toString : textParts.joined()
                     guard !delta.isEmpty else { continue }
                     if firstText == nil { firstText = Date().timeIntervalSince(start) }
+                    lastText = Date().timeIntervalSince(start)
                     text += delta
-                    await self?.publish(text: text, firstText: firstText, start: start, id: id)
+                    await self?.publish(text: text, firstText: firstText, start: start, id: id, startedUptime: startedUptime, lastText: lastText)
                 }
             } catch {
                 if control.isCancelled { throw CancellationError() }
@@ -367,7 +383,12 @@ final class LocalModelService: ObservableObject {
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw LocalModelError.emptyResponse
             }
-            await self?.publish(text: text, firstText: firstText, start: start, id: id)
+            let benchmark = try? conversation.getBenchmarkInfo()
+            await self?.publish(text: text, firstText: firstText, start: start, id: id,
+                startedUptime: startedUptime, lastText: lastText,
+                outputTokens: benchmark?.lastDecodeTokenCount,
+                decodeRate: benchmark?.lastDecodeTokensPerSecond,
+                nativeFirstToken: benchmark?.timeToFirstTokenInSecond)
             return text
             }
             do {
@@ -538,9 +559,11 @@ final class LocalModelService: ObservableObject {
         }
     }
 
+    static func isE4B(_ url: URL) -> Bool { url.lastPathComponent.lowercased().contains("e4b") }
+
     private func applyCatalog(_ records: [LocalModelRecord]) {
         models = records.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
-        modelURLs = models.filter { $0.kind == .chat }.map(\.url)
+        modelURLs = models.filter { $0.kind == .chat && Self.isE4B($0.url) }.map(\.url)
         embeddingModelURLs = models.filter { $0.kind == .embedding }.map(\.url)
         if let loadedModelURL, !modelURLs.contains(loadedModelURL) {
             releaseEngine()
@@ -555,11 +578,15 @@ final class LocalModelService: ObservableObject {
         }
     }
 
-    private func publish(text: String, firstText: TimeInterval?, start: Date, id: UUID) {
+    private func publish(text: String, firstText: TimeInterval?, start: Date, id: UUID,
+                         startedUptime: TimeInterval, lastText: TimeInterval?,
+                         outputTokens: Int? = nil, decodeRate: Double? = nil, nativeFirstToken: Double? = nil) {
         guard generationID == id, !requiresRestart, generationControl?.isCancelled != true else { return }
         response = text
         metrics = InferenceMetrics(elapsedSeconds: Date().timeIntervalSince(start),
-            firstTextSeconds: firstText, characterCount: text.count, cancelled: false)
+            firstTextSeconds: firstText, characterCount: text.count, cancelled: false,
+            startedUptime: startedUptime, lastTextSeconds: lastText, outputTokenCount: outputTokens,
+            decodeTokensPerSecond: decodeRate, nativeFirstTokenSeconds: nativeFirstToken)
         if lastGenerationDiagnostics?.requestID == id {
             lastGenerationDiagnostics?.responseCharacterCount = text.count
             lastGenerationDiagnostics?.elapsedSeconds = Date().timeIntervalSince(start)

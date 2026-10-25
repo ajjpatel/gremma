@@ -323,6 +323,12 @@ final class VoiceService: NSObject, ObservableObject {
         speak(lastSpokenText)
     }
 
+    /// Deleted source evidence must not remain available through the Repeat control.
+    func clearSpokenHistory() {
+        stopSpeaking()
+        lastSpokenText = ""
+    }
+
     private func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
         let current = SFSpeechRecognizer.authorizationStatus()
         guard current == .notDetermined else { return current }
